@@ -1,4 +1,4 @@
-const DEFAULT_CHIRP_REVISION = "1467519e792e8ebcc9a33dc40df0b2e273ce9a53";
+const DEFAULT_CHIRP_REVISION = "61a03fc242a685335bae2f449d685fc59de30e6d";
 
 const CORE_CHIRP_RELATIVE_FILES = [
   "chirp/__init__.py",
