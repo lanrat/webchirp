@@ -39,8 +39,14 @@ test("isFtdiDevice recognizes the FTDI vendor id", () => {
 });
 
 test("WebUSB provider dispatches FTDI devices to the FTDI driver", async () => {
+  let requestedOptions = null;
   setNavigator({
-    usb: { requestDevice: async () => ({ vendorId: 0x0403, productId: 0x6015 }) },
+    usb: {
+      requestDevice: async (options) => {
+        requestedOptions = options;
+        return { vendorId: 0x0403, productId: 0x6015 };
+      },
+    },
   });
   const serial = createWebUsbSerial({
     loadCdcSerialPort: async () => {
@@ -50,6 +56,11 @@ test("WebUSB provider dispatches FTDI devices to the FTDI driver", async () => {
   const port = await serial.requestPort();
   assert.ok(port instanceof FtdiSerialPort);
   assert.deepEqual(port.getInfo(), { usbVendorId: 0x0403, usbProductId: 0x6015 });
+  // The chooser must filter on the FTDI vendor id, or the device is never shown.
+  assert.ok(
+    requestedOptions?.filters?.some((f) => f.vendorId === FTDI_VENDOR_ID),
+    "requestDevice must be called with an FTDI vendor filter",
+  );
 });
 
 test("WebUSB provider dispatches non-FTDI devices to the CDC polyfill", async () => {
