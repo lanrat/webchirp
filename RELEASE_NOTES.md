@@ -1,5 +1,8 @@
 # Release Notes
 
+## 2026-06-23
+- Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
+
 ## 2026-04-13
 - Added loading placeholders while CHIRP radio drivers initialize.
 
