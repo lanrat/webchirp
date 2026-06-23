@@ -31,9 +31,17 @@ Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/).
 Serial access requires a browser with Web Serial support and a secure context
 (`http://localhost` works).
 
-Browsers that expose WebUSB but not Web Serial (notably Chrome on Android) fall
-back to WebUSB automatically. A single device chooser is shown and the selected
-adapter is dispatched to a chip-specific driver:
+There are two connect buttons:
+
+- **Connect** uses native Web Serial when available, otherwise WebUSB.
+- **Connect via WebUSB** forces the WebUSB path. Use this when native Web Serial
+  exists but cannot drive your adapter — notably Chrome on Android, which now
+  exposes `navigator.serial` but only supports a limited set of devices (not
+  FTDI/PL2303-class USB UART chips). There is no way to detect this in advance,
+  hence the explicit button.
+
+Over WebUSB a single device chooser is shown and the selected adapter is
+dispatched to a chip-specific driver:
 
 - **FTDI** adapters (FT231X, FT232R, ...) use a built-in FTDI-over-WebUSB driver.
 - **USB CDC-ACM** devices use Google's `web-serial-polyfill`.

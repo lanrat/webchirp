@@ -18,9 +18,13 @@ const rpcClient = createRuntimeRpcClient({
 ui.setRuntimeApi(rpcClient);
 
 const serialCapability = serialBridge.getCapability();
+ui.setSerialController({
+  capability: serialCapability,
+  setPreferredTransport: (transport) => serialBridge.setPreferredTransport(transport),
+});
 ui.init(serialCapability.supported);
-if (serialCapability.supported && !serialCapability.native && serialCapability.webusb) {
+if (serialCapability.webusb) {
   ui.logSerial(
-    "Native Web Serial unavailable; using WebUSB. Supported adapters: FTDI (FT231X/FT232R, etc.) and USB CDC-ACM devices. Other vendor-specific cables (CH340/CP2102/PL2303) are not supported yet.",
+    "If 'Connect' does not find your USB-serial adapter (e.g. an FTDI cable on Android), use 'Connect via WebUSB'. WebUSB supports FTDI (FT231X/FT232R, etc.) and USB CDC-ACM devices; other vendor chips (CH340/CP2102/PL2303) are not supported yet.",
   );
 }

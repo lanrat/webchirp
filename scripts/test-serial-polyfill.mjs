@@ -44,6 +44,27 @@ test("falls back to the WebUSB provider when only WebUSB exists", async () => {
   assert.equal(bridge.transport, "webusb");
 });
 
+test("forcing webusb uses the WebUSB provider even when native serial exists", async () => {
+  // Mirrors Chrome on Android: native Web Serial is present but cannot drive the
+  // adapter, so the user explicitly forces the WebUSB transport.
+  setNavigator({ serial: { requestPort: async () => ({}) }, usb: {} });
+
+  const webUsbSerial = { requestPort: async () => ({}) };
+  const bridge = new BrowserSerialBridge({ createWebUsbSerial: () => webUsbSerial });
+
+  bridge.setPreferredTransport("webusb");
+  const serial = await bridge._ensureSerial();
+  assert.equal(serial, webUsbSerial);
+  assert.equal(bridge.transport, "webusb");
+});
+
+test("forcing webserial fails when native serial is unavailable", async () => {
+  setNavigator({ usb: {} });
+  const bridge = new BrowserSerialBridge({ createWebUsbSerial: () => ({ requestPort: async () => ({}) }) });
+  bridge.setPreferredTransport("webserial");
+  await assert.rejects(() => bridge._ensureSerial(), /Native Web Serial is not supported/);
+});
+
 test("reports unsupported and refuses to open with no serial transport", async () => {
   setNavigator({});
 

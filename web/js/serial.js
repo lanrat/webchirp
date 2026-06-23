@@ -57,7 +57,22 @@ export class BrowserSerialBridge {
     // chip-aware provider) and which transport it represents, set on connect.
     this.serial = null;
     this.transport = "";
+    // Which transport open() should use: "auto" (native preferred), "webserial",
+    // or "webusb". Forcing "webusb" is needed where native Web Serial exists but
+    // cannot drive the adapter (e.g. FTDI cables on Chrome for Android).
+    this.preferredTransport = "auto";
     this._createWebUsbSerial = createWebUsbSerialImpl || createWebUsbSerial;
+  }
+
+  // Choose the transport open() will use. Resets any cached provider while
+  // disconnected so the next connect re-resolves against the new preference.
+  setPreferredTransport(transport) {
+    this.preferredTransport =
+      transport === "webusb" || transport === "webserial" ? transport : "auto";
+    if (!this.port) {
+      this.serial = null;
+      this.transport = "";
+    }
   }
 
   isSupported() {
@@ -77,6 +92,23 @@ export class BrowserSerialBridge {
     if (this.serial) {
       return this.serial;
     }
+    if (this.preferredTransport === "webusb") {
+      if (!hasWebUsb()) {
+        throw new Error("WebUSB is not supported in this browser.");
+      }
+      this.serial = this._createWebUsbSerial();
+      this.transport = "webusb";
+      return this.serial;
+    }
+    if (this.preferredTransport === "webserial") {
+      if (!hasNativeSerial()) {
+        throw new Error("Native Web Serial is not supported in this browser.");
+      }
+      this.serial = navigator.serial;
+      this.transport = "webserial";
+      return this.serial;
+    }
+    // Auto: prefer native Web Serial, fall back to the WebUSB chip-aware provider.
     if (hasNativeSerial()) {
       this.serial = navigator.serial;
       this.transport = "webserial";
