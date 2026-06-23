@@ -2198,6 +2198,26 @@ export function createUiController() {
       lastErrorSummary = "";
     });
 
+    document.querySelector("#debug-copy")?.addEventListener("click", async () => {
+      const text = debugOutputEl.value || "";
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          // Fallback for browsers/contexts without the async clipboard API.
+          debugOutputEl.focus();
+          debugOutputEl.select();
+          document.execCommand("copy");
+        }
+        setStatus("Debug log copied to clipboard.");
+      } catch {
+        // Last resort: select the text so the user can copy manually.
+        debugOutputEl.focus();
+        debugOutputEl.select();
+        setStatus("Could not copy automatically; log text is selected — copy it manually.");
+      }
+    });
+
     reportIssueEl?.addEventListener("click", () => {
       openPrefilledIssue();
     });
