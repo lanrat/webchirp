@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 
 const webRootDir = path.resolve(process.cwd(), "web");
 const port = Number.parseInt(process.env.PORT || "8000", 10);
+const host = process.env.HOST || "127.0.0.1";
 
 const MIME_BY_EXT = {
   ".css": "text/css; charset=utf-8",
@@ -92,7 +93,7 @@ const server = createServer((req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
-server.listen(port, "127.0.0.1", () => {
+server.listen(port, host, () => {
   // eslint-disable-next-line no-console
-  console.log(`webchirp dev server listening at http://127.0.0.1:${port}/`);
+  console.log(`webchirp dev server listening at http://${host}:${port}/`);
 });

@@ -248,6 +248,7 @@ button:not(:disabled):hover {
   display: none;
 }
 
+#radio-search,
 #radio-make,
 #radio-model {
   width: 100%;
