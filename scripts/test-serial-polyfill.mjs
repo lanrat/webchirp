@@ -14,8 +14,8 @@ test("prefers native Web Serial when available", async () => {
   setNavigator({ serial: nativeSerial, usb: {} });
 
   const bridge = new BrowserSerialBridge({
-    loadPolyfill: async () => {
-      throw new Error("polyfill should not be loaded when native serial exists");
+    createWebUsbSerial: () => {
+      throw new Error("WebUSB provider should not be used when native serial exists");
     },
   });
 
@@ -25,23 +25,23 @@ test("prefers native Web Serial when available", async () => {
   assert.equal(bridge.transport, "webserial");
 });
 
-test("falls back to the WebUSB polyfill when only WebUSB exists", async () => {
+test("falls back to the WebUSB provider when only WebUSB exists", async () => {
   setNavigator({ usb: {} });
 
-  let loaded = false;
-  const polyfillSerial = { requestPort: async () => ({}) };
+  let created = false;
+  const webUsbSerial = { requestPort: async () => ({}) };
   const bridge = new BrowserSerialBridge({
-    loadPolyfill: async () => {
-      loaded = true;
-      return polyfillSerial;
+    createWebUsbSerial: () => {
+      created = true;
+      return webUsbSerial;
     },
   });
 
   assert.deepEqual(bridge.getCapability(), { supported: true, native: false, webusb: true });
   const serial = await bridge._ensureSerial();
-  assert.ok(loaded, "polyfill loader should be invoked");
-  assert.equal(serial, polyfillSerial);
-  assert.equal(bridge.transport, "webusb-polyfill");
+  assert.ok(created, "WebUSB provider factory should be invoked");
+  assert.equal(serial, webUsbSerial);
+  assert.equal(bridge.transport, "webusb");
 });
 
 test("reports unsupported and refuses to open with no serial transport", async () => {
@@ -51,11 +51,4 @@ test("reports unsupported and refuses to open with no serial transport", async (
   assert.equal(bridge.isSupported(), false);
   assert.deepEqual(bridge.getCapability(), { supported: false, native: false, webusb: false });
   await assert.rejects(() => bridge.open(9600), /Neither Web Serial nor WebUSB/);
-});
-
-test("surfaces a clear error when the polyfill fails to load", async () => {
-  setNavigator({ usb: {} });
-
-  const bridge = new BrowserSerialBridge({ loadPolyfill: async () => null });
-  await assert.rejects(() => bridge._ensureSerial(), /polyfill failed to load/);
 });

@@ -1,3 +1,5 @@
+import { createWebUsbSerial } from "./webusb-serial.js";
+
 // Parse user-entered hex byte text into a Uint8Array for serial writes.
 function parseHex(input) {
   const text = String(input || "").trim();
@@ -34,21 +36,6 @@ function concatUint8(a, b) {
   return out;
 }
 
-// Google's Web Serial API polyfill over WebUSB, revision-pinned like the other
-// browser-loaded dependencies. It lets browsers that expose WebUSB but not Web
-// Serial (e.g. Chrome on Android) drive USB CDC-ACM serial devices. Vendor-
-// specific UART bridges (CH340/CP2102/PL2303/FTDI) are NOT USB CDC and will not
-// work through it; those still require native Web Serial.
-const WEB_SERIAL_POLYFILL_URL =
-  "https://cdn.jsdelivr.net/npm/web-serial-polyfill@1.0.15/+esm";
-
-// Lazily import the polyfill only when it is actually needed, so the native Web
-// Serial path never depends on the CDN.
-async function defaultLoadPolyfill() {
-  const mod = await import(WEB_SERIAL_POLYFILL_URL);
-  return mod.serial;
-}
-
 function hasNativeSerial() {
   return typeof navigator !== "undefined" && "serial" in navigator;
 }
@@ -59,7 +46,7 @@ function hasWebUsb() {
 
 // Manage Web Serial lifecycle and provide buffered byte-oriented I/O helpers.
 export class BrowserSerialBridge {
-  constructor({ loadPolyfill } = {}) {
+  constructor({ createWebUsbSerial: createWebUsbSerialImpl } = {}) {
     this.port = null;
     this.reader = null;
     this.writer = null;
@@ -67,10 +54,10 @@ export class BrowserSerialBridge {
     this.readWaiters = new Set();
     this.lastDeviceName = "";
     // The resolved Web Serial provider (native navigator.serial or the WebUSB
-    // polyfill) and which transport it represents, set on first connect.
+    // chip-aware provider) and which transport it represents, set on connect.
     this.serial = null;
     this.transport = "";
-    this.loadPolyfill = loadPolyfill || defaultLoadPolyfill;
+    this._createWebUsbSerial = createWebUsbSerialImpl || createWebUsbSerial;
   }
 
   isSupported() {
@@ -85,7 +72,7 @@ export class BrowserSerialBridge {
   }
 
   // Resolve the serial provider: prefer native Web Serial, otherwise fall back
-  // to the WebUSB polyfill. Cached after the first call.
+  // to the WebUSB chip-aware provider. Cached after the first call.
   async _ensureSerial() {
     if (this.serial) {
       return this.serial;
@@ -96,12 +83,8 @@ export class BrowserSerialBridge {
       return this.serial;
     }
     if (hasWebUsb()) {
-      const serial = await this.loadPolyfill();
-      if (!serial || typeof serial.requestPort !== "function") {
-        throw new Error("WebUSB serial polyfill failed to load.");
-      }
-      this.serial = serial;
-      this.transport = "webusb-polyfill";
+      this.serial = this._createWebUsbSerial();
+      this.transport = "webusb";
       return this.serial;
     }
     throw new Error("Neither Web Serial nor WebUSB is supported in this browser.");
@@ -126,10 +109,10 @@ export class BrowserSerialBridge {
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
     this._startReadLoop();
-    const viaPolyfill = this.transport === "webusb-polyfill";
+    const viaWebUsb = this.transport === "webusb";
     return {
       connected: true,
-      message: `Connected at ${baudRate} baud${viaPolyfill ? " (WebUSB polyfill)" : ""}`,
+      message: `Connected at ${baudRate} baud${viaWebUsb ? " (via WebUSB)" : ""}`,
       deviceName: this.lastDeviceName,
       usbVendorId: identity.usbVendorId,
       usbProductId: identity.usbProductId,

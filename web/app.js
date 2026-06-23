@@ -21,6 +21,6 @@ const serialCapability = serialBridge.getCapability();
 ui.init(serialCapability.supported);
 if (serialCapability.supported && !serialCapability.native && serialCapability.webusb) {
   ui.logSerial(
-    "Native Web Serial unavailable; using WebUSB serial polyfill. Only USB CDC-ACM devices are supported this way (vendor-specific CH340/CP2102/PL2303/FTDI cables are not).",
+    "Native Web Serial unavailable; using WebUSB. Supported adapters: FTDI (FT231X/FT232R, etc.) and USB CDC-ACM devices. Other vendor-specific cables (CH340/CP2102/PL2303) are not supported yet.",
   );
 }
