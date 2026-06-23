@@ -4,6 +4,7 @@
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.
 - Made the Serial Bridge controls a collapsible `<details>` on mobile (a static heading on desktop) so the channel list isn't pushed down. The mobile channel view stays the horizontally-scrolling table (a card view was tried and reverted by preference). Desktop layout is unchanged.
+- Added a WebUSB-based Web Serial polyfill fallback so browsers that expose WebUSB but not Web Serial (e.g. Chrome on Android) can connect to radios. The polyfill loads lazily only when native Web Serial is missing; it supports USB CDC-ACM devices only (vendor-specific CH340/CP2102/PL2303/FTDI cables still need native Web Serial).
 
 ## 2026-04-13
 - Added loading placeholders while CHIRP radio drivers initialize.

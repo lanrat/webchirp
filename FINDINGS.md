@@ -1,3 +1,9 @@
+## 2026-06-23
+
+- Chrome on Android (and similar) exposes WebUSB but not Web Serial, so `"serial" in navigator` is false there even though USB serial hardware is reachable. Google's `web-serial-polyfill` implements the Web Serial API surface (`requestPort`/`open`/`readable`/`writable`/`setSignals`/`getInfo`) over WebUSB, so `BrowserSerialBridge` can use it as a drop-in alternate provider with no changes to the runtime bridge or read/write loops.
+- The polyfill only handles USB CDC-ACM (communications-class) devices. The vendor-specific UART bridges used by most radio programming cables (CH340, CP2102, PL2303, FTDI) are not USB CDC and need device-specific control transfers the generic polyfill does not implement, so they will not connect through WebUSB — this is a hard limitation of the approach, not a bug to fix.
+- The polyfill ESM loads from jsDelivr with `access-control-allow-origin: *` and `cross-origin-resource-policy: cross-origin`, so a dynamic `import()` of it satisfies the page's `COEP: require-corp` isolation (same as the Pyodide load). It is imported lazily only when native Web Serial is absent, so the desktop path never depends on the CDN.
+
 ## 2026-03-14
 
 - `buttons.github.io/buttons.js` is not a viable GitHub star widget under cross-origin isolation. Even if the script is self-hosted, the widget path still depends on cross-origin embed resources, which conflicts with `COEP`/`COOP` on the static `codeplug.org` deployment.

@@ -31,6 +31,12 @@ Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/).
 Serial access requires a browser with Web Serial support and a secure context
 (`http://localhost` works).
 
+Browsers that expose WebUSB but not Web Serial (notably Chrome on Android) fall
+back to a WebUSB-based Web Serial polyfill automatically. That path only drives
+USB CDC-ACM devices; vendor-specific UART bridges (CH340, CP2102, PL2303, FTDI)
+that many radio programming cables use are not USB CDC and still require native
+Web Serial on desktop.
+
 `npm run dev` serves with cross-origin isolation headers (`COOP`/`COEP`) so
 Pyodide synchronous JS bridging can use `SharedArrayBuffer` without warnings.
 
