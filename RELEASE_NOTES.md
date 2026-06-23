@@ -1,5 +1,8 @@
 # Release Notes
 
+## 2026-06-23
+- Added an automatic dark theme. All colors were tokenized into CSS custom properties and a dark palette is applied via `prefers-color-scheme: dark`, so the UI (including the About page) follows the operating-system light/dark setting. No JS and no markup changes — light and dark share one code path; light appearance is unchanged.
+
 ## 2026-04-13
 - Added loading placeholders while CHIRP radio drivers initialize.
 
