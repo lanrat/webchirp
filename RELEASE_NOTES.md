@@ -1,5 +1,10 @@
 # Release Notes
 
+## 2026-06-23
+- Radio make/model dropdowns now populate instantly from a prebuilt static catalog (`web/radio-catalog.json`) instead of booting Pyodide and importing every CHIRP driver on first load; live driver enumeration remains as a fallback.
+- Added a `build:catalog` npm script (run automatically by `build:dist`) that regenerates the catalog from the local CHIRP submodule.
+- Added a search box above the make/model dropdowns to filter radios by make or model.
+
 ## 2026-04-13
 - Added loading placeholders while CHIRP radio drivers initialize.
 

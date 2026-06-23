@@ -67,11 +67,37 @@ async function ensureSelectedRadioModules(moduleShortName) {
   await pyodide.runPythonAsync("ensure_radio_module(_sel_module_short)");
 }
 
-// Build and cache the radio catalog from CHIRP's runtime registration directory.
-async function loadRadioCatalogFromSources() {
-  if (radioCatalogCache) {
-    return radioCatalogCache;
+function sortRadioCatalog(radios) {
+  return radios.slice().sort((a, b) => {
+    const av = `${a.vendor} ${a.model}`;
+    const bv = `${b.vendor} ${b.model}`;
+    return av.localeCompare(bv);
+  });
+}
+
+// Prefer a prebuilt static catalog so dropdowns can populate without booting
+// Pyodide or importing every driver. Returns null if it is missing/unusable so
+// callers fall back to live enumeration.
+async function loadRadioCatalogFromStatic() {
+  try {
+    const url = new URL("../radio-catalog.json", import.meta.url);
+    const res = await fetch(url);
+    if (!res.ok) {
+      return null;
+    }
+    const data = await res.json();
+    const radios = Array.isArray(data) ? data : data?.radios;
+    if (!Array.isArray(radios) || radios.length === 0) {
+      return null;
+    }
+    return radios;
+  } catch {
+    return null;
   }
+}
+
+// Build the radio catalog by importing every driver in Pyodide (slow first run).
+async function loadRadioCatalogFromSources() {
   const modules = await listDriverModules(pythonSource);
 
   await ensurePyodide();
@@ -89,6 +115,20 @@ async function loadRadioCatalogFromSources() {
 
   radioCatalogCache = allRadios;
   return radioCatalogCache;
+}
+
+// Resolve the radio catalog, preferring the prebuilt static file so the
+// dropdowns appear without waiting on Pyodide + per-driver imports.
+async function loadRadioCatalog() {
+  if (radioCatalogCache) {
+    return radioCatalogCache;
+  }
+  const fromStatic = await loadRadioCatalogFromStatic();
+  if (fromStatic) {
+    radioCatalogCache = sortRadioCatalog(fromStatic);
+    return radioCatalogCache;
+  }
+  return loadRadioCatalogFromSources();
 }
 
 // Lazily initialize Pyodide, preload core CHIRP files, and load runtime bridge.
@@ -131,7 +171,7 @@ async function handleGetRuntimeInfo() {
 }
 
 async function handleListRadios() {
-  const radios = await loadRadioCatalogFromSources();
+  const radios = await loadRadioCatalog();
   return { radios };
 }
 
