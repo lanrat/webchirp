@@ -87,8 +87,8 @@
 
       <main class="main-layout">
         <aside class="left-panel">
-          <div class="left-panel-main">
-            <h2>Serial Bridge</h2>
+          <details class="left-panel-main serial-bridge" open>
+            <summary class="left-panel-summary">Serial Bridge</summary>
             <p id="webserial-support-warning" class="serial-support-warning" hidden>
               Web Serial is unavailable in this browser, so radio download/upload will not work
               correctly. Use a supported browser:
@@ -119,7 +119,7 @@
               <button id="radio-download" disabled>Download Radio</button>
               <button id="radio-upload" disabled>Upload Radio</button>
             </div>
-          </div>
+          </details>
 
           <section class="sidebar-warning-panel" aria-label="Experimental software warning">
             <strong>Warning</strong>

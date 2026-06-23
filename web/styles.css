@@ -18,6 +18,7 @@ body {
   color: var(--text);
   font-family: "Segoe UI", Tahoma, sans-serif;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -65,6 +66,7 @@ body {
 
 .app-shell {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -185,6 +187,20 @@ button:not(:disabled):hover {
 .left-panel h2 {
   margin-top: 0;
   font-size: 1rem;
+}
+
+/* Serial Bridge is a <details>: a static heading on desktop, a collapsible
+   disclosure on mobile (the mobile breakpoint re-enables the toggle/marker). */
+.left-panel-summary {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+  font-weight: 700;
+  list-style: none;
+  pointer-events: none;
+}
+
+.left-panel-summary::-webkit-details-marker {
+  display: none;
 }
 
 .sidebar-warning-panel {
@@ -750,15 +766,133 @@ button:not(:disabled):hover {
 }
 
 @media (max-width: 900px) {
+  /* Let the page flow and scroll vertically instead of locking to the viewport,
+     so the stacked panels are all reachable on a phone. */
+  body {
+    height: auto;
+    min-height: 100dvh;
+    overflow: auto;
+  }
+
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .toolbar-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Stack sidebar above the editor; let both size to content and the page scroll. */
   .main-layout {
-    grid-template-columns: 1fr;
-    min-height: 0;
+    display: block;
+    overflow: visible;
   }
 
   .left-panel {
     display: block;
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+
+  .editor-panel {
+    display: block;
+    overflow: visible;
+  }
+
+  .editor-view.is-active {
+    display: block;
+  }
+
+  /* Bound the wide channel table so it scrolls internally while the page can
+     still scroll past it to the debug panel. */
+  .mem-table-scroll {
+    max-height: 60dvh;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Serial Bridge disclosure becomes collapsible on mobile so the channel list
+     isn't pushed down the page. */
+  .left-panel-summary {
+    pointer-events: auto;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+    min-height: 2.75rem;
+  }
+
+  .left-panel-summary::after {
+    content: "\25BE";
+    color: var(--muted);
+  }
+
+  .serial-bridge:not([open]) .left-panel-summary::after {
+    content: "\25B8";
+  }
+
+  /* Don't compress the 17 columns to fit the screen (which makes them
+     unreadable); let the table take its natural width and scroll horizontally,
+     with readable, tappable cells. */
+  #mem-table {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  #mem-table th,
+  #mem-table td {
+    white-space: nowrap;
+  }
+
+  #mem-table td input,
+  #mem-table td select {
+    min-width: 6rem;
+    min-height: 2.25rem;
+  }
+
+  /* Keep the auto-indexed Location column compact. */
+  #mem-table td:first-child,
+  #mem-table th:first-child {
+    min-width: 2.75rem;
+  }
+
+  #mem-table td:first-child input,
+  #mem-table td:first-child select,
+  #mem-table .channel-location-button {
+    min-width: 2.75rem;
+  }
+
+  /* Comfortable touch targets for primary controls (table cells excluded). */
+  .toolbar-actions button,
+  .toolbar-link,
+  .editor-view-toggle button,
+  .left-panel button,
+  .left-panel select,
+  .serial-actions button,
+  .channel-toolbar > button,
+  .channel-menu-popup button,
+  .modal-actions button,
+  .debug-actions button {
+    min-height: 2.75rem;
+  }
+
+  /* The actions popup is fixed-width on desktop; keep it on-screen on phones. */
+  .channel-menu-popup {
+    min-width: 0;
+    width: max-content;
+    max-width: calc(100vw - 2rem);
+  }
+
+  #debug-output {
+    min-height: 120px;
   }
 
   .modal-grid {
@@ -783,5 +917,25 @@ button:not(:disabled):hover {
 
   .settings-fields {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  /* Single-column serial actions and full-width view toggle on narrow phones. */
+  .serial-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .editor-view-toggle {
+    display: flex;
+  }
+
+  .editor-view-toggle button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .toolbar h1 {
+    flex: 1 1 100%;
   }
 }
