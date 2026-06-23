@@ -189,6 +189,20 @@ button:not(:disabled):hover {
   font-size: 1rem;
 }
 
+/* Serial Bridge is a <details>: a static heading on desktop, a collapsible
+   disclosure on mobile (the mobile breakpoint re-enables the toggle/marker). */
+.left-panel-summary {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+  font-weight: 700;
+  list-style: none;
+  pointer-events: none;
+}
+
+.left-panel-summary::-webkit-details-marker {
+  display: none;
+}
+
 .sidebar-warning-panel {
   margin: 0.2rem 0 0.9rem;
   padding: 0.75rem 0.8rem;
@@ -802,35 +816,108 @@ button:not(:disabled):hover {
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Don't compress the 17 columns to fit the screen (which makes them
-     unreadable); let the table take its natural width and scroll horizontally,
-     with readable, tappable cells. */
-  #mem-table {
-    width: max-content;
-    min-width: 100%;
+  /* Serial Bridge disclosure becomes collapsible on mobile so the channel list
+     isn't pushed down the page. */
+  .left-panel-summary {
+    pointer-events: auto;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+    min-height: 2.75rem;
   }
 
-  #mem-table th,
+  .left-panel-summary::after {
+    content: "\25BE";
+    color: var(--muted);
+  }
+
+  .serial-bridge:not([open]) .left-panel-summary::after {
+    content: "\25B8";
+  }
+
+  /* Card view: render each channel as a stacked card instead of a wide
+     17-column row. Same <table> DOM and renderTable JS — purely CSS. Cell
+     labels come from the data-column attribute the cells already carry. */
+  #mem-table {
+    width: 100%;
+    border: none;
+    background: transparent;
+  }
+
+  #mem-table thead {
+    display: none;
+  }
+
+  #mem-table tbody {
+    display: block;
+  }
+
+  #mem-table tr {
+    display: block;
+    margin: 0 0 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 1px 2px rgba(23, 42, 70, 0.08);
+    overflow: hidden;
+  }
+
+  #mem-table tr.is-selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(13, 94, 168, 0.25);
+  }
+
   #mem-table td {
-    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: auto;
+    border: none;
+    border-bottom: 1px solid #eef2f8;
+    padding: 0.4rem 0.7rem;
+    white-space: normal;
+  }
+
+  #mem-table tr td:last-child {
+    border-bottom: none;
+  }
+
+  /* Self-label each field from its column name (no <thead> on mobile). */
+  #mem-table td::before {
+    content: attr(data-column);
+    flex: 0 0 8.5rem;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: var(--muted);
   }
 
   #mem-table td input,
   #mem-table td select {
-    min-width: 6rem;
-    min-height: 2.25rem;
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    min-height: 2.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    padding: 0.3rem 0.45rem;
   }
 
-  /* Keep the auto-indexed Location column compact. */
-  #mem-table td:first-child,
-  #mem-table th:first-child {
-    min-width: 2.75rem;
+  /* Location row reads as the card header and stays the selection toggle. */
+  #mem-table td:first-child {
+    background: #f3f7fd;
+    border-bottom: 1px solid var(--border);
   }
 
-  #mem-table td:first-child input,
-  #mem-table td:first-child select,
   #mem-table .channel-location-button {
-    min-width: 2.75rem;
+    flex: 1 1 auto;
+    width: auto;
+    min-height: 2.5rem;
+    text-align: left;
+    border-radius: 6px;
   }
 
   /* Comfortable touch targets for primary controls (table cells excluded). */

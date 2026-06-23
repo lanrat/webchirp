@@ -3,6 +3,7 @@
 ## 2026-06-23
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.
+- Mobile card view (CSS only): on phones each channel now renders as a stacked card (one labelled field per line) instead of a wide horizontally-scrolled row — no JS or DOM changes, the same `<table>` and render logic, with field labels taken from each cell's column name. The Serial Bridge controls became a collapsible `<details>` (a static heading on desktop) so the channel list isn't pushed down. Desktop layout is unchanged.
 
 ## 2026-04-13
 - Added loading placeholders while CHIRP radio drivers initialize.
