@@ -123,40 +123,62 @@ export class BrowserSerialBridge {
   }
 
   async open(baudRate) {
-    if (this.port) {
-      return { connected: true, message: "Already connected." };
+    // A live connection requires a writer, not just a port handle. A previous
+    // attempt that failed mid-open can leave this.port set with no writer; treat
+    // that as not-connected and tear it down before retrying.
+    if (this.port && this.writer) {
+      return {
+        connected: true,
+        message: "Already connected.",
+        transport: this.transport,
+      };
     }
-    const serial = await this._ensureSerial();
+    if (this.port) {
+      await this._teardown();
+    }
 
-    this.port = await serial.requestPort({});
-    await this.port.open({
-      baudRate,
-      dataBits: 8,
-      stopBits: 1,
-      parity: "none",
-      flowControl: "none",
-    });
-    const identity = this._getPortIdentity(this.port);
-    this.lastDeviceName = this._describePort(this.port);
-    this.reader = this.port.readable.getReader();
-    this.writer = this.port.writable.getWriter();
-    this._startReadLoop();
-    const viaWebUsb = this.transport === "webusb";
-    return {
-      connected: true,
-      message: `Connected at ${baudRate} baud${viaWebUsb ? " (via WebUSB)" : ""}`,
-      deviceName: this.lastDeviceName,
-      usbVendorId: identity.usbVendorId,
-      usbProductId: identity.usbProductId,
-      transport: this.transport,
-    };
+    const serial = await this._ensureSerial();
+    try {
+      this.port = await serial.requestPort({});
+      await this.port.open({
+        baudRate,
+        dataBits: 8,
+        stopBits: 1,
+        parity: "none",
+        flowControl: "none",
+      });
+      const identity = this._getPortIdentity(this.port);
+      this.lastDeviceName = this._describePort(this.port);
+      this.reader = this.port.readable.getReader();
+      this.writer = this.port.writable.getWriter();
+      this._startReadLoop();
+      const viaWebUsb = this.transport === "webusb";
+      return {
+        connected: true,
+        message: `Connected at ${baudRate} baud${viaWebUsb ? " (via WebUSB)" : ""}`,
+        deviceName: this.lastDeviceName,
+        usbVendorId: identity.usbVendorId,
+        usbProductId: identity.usbProductId,
+        transport: this.transport,
+      };
+    } catch (error) {
+      // Never leave a half-open port behind; it would poison the next connect.
+      await this._teardown();
+      throw error;
+    }
   }
 
   async close() {
     if (!this.port) {
       return { connected: false, message: "No port connected." };
     }
+    await this._teardown();
+    return { connected: false, message: "Disconnected." };
+  }
 
+  // Release reader/writer locks and close the port, clearing all session state.
+  // Safe to call on a fully- or partially-open port.
+  async _teardown() {
     try {
       await this.reader?.cancel();
     } catch {
@@ -173,7 +195,7 @@ export class BrowserSerialBridge {
       // Ignore lock-release errors.
     }
     try {
-      await this.port.close();
+      await this.port?.close();
     } catch {
       // Ignore close errors.
     }
@@ -183,7 +205,6 @@ export class BrowserSerialBridge {
     this.writer = null;
     this.readBuffer = new Uint8Array(0);
     this._resolveReadWaiters(false);
-    return { connected: false, message: "Disconnected." };
   }
 
   getPortInfo() {

@@ -65,6 +65,25 @@ test("forcing webserial fails when native serial is unavailable", async () => {
   await assert.rejects(() => bridge._ensureSerial(), /Native Web Serial is not supported/);
 });
 
+test("a failed open tears down state instead of leaving a half-open port", async () => {
+  setNavigator({ usb: {} });
+  const failingPort = {
+    open: async () => {
+      throw new Error("boom");
+    },
+    getInfo: () => ({}),
+  };
+  const bridge = new BrowserSerialBridge({
+    createWebUsbSerial: () => ({ requestPort: async () => failingPort }),
+  });
+  bridge.setPreferredTransport("webusb");
+
+  await assert.rejects(() => bridge.open(9600), /boom/);
+  // No half-open port left behind to poison the next connect.
+  assert.equal(bridge.port, null);
+  assert.equal(bridge.writer, null);
+});
+
 test("reports unsupported and refuses to open with no serial transport", async () => {
   setNavigator({});
 

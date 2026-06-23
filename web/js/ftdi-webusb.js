@@ -106,14 +106,25 @@ export class FtdiSerialPort {
   async open(options = {}) {
     const baudRate = Number(options.baudRate) || 9600;
 
-    await this.device.open();
+    try {
+      await this.device.open();
+    } catch (error) {
+      throw new Error(`FTDI: could not open USB device: ${error?.message || error}`);
+    }
     if (!this.device.configuration) {
       await this.device.selectConfiguration(1);
     }
 
     const iface = this.device.configuration.interfaces[0];
     this._interfaceNumber = iface.interfaceNumber;
-    await this.device.claimInterface(this._interfaceNumber);
+    try {
+      await this.device.claimInterface(this._interfaceNumber);
+    } catch (error) {
+      throw new Error(
+        `FTDI: could not claim USB interface ${this._interfaceNumber} `
+        + `(another driver may already control it): ${error?.message || error}`,
+      );
+    }
 
     for (const endpoint of iface.alternate.endpoints) {
       if (endpoint.direction === "in") {
