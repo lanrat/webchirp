@@ -7,6 +7,7 @@
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.
 - Made the Serial Bridge controls a collapsible `<details>` on mobile (a static heading on desktop) so the channel list isn't pushed down. The mobile channel view stays the horizontally-scrolling table (a card view was tried and reverted by preference). Desktop layout is unchanged.
+- Added an automatic dark theme. All colors were tokenized into CSS custom properties and a dark palette is applied via `prefers-color-scheme: dark`, so the UI (including the About page) follows the operating-system light/dark setting. No JS and no markup changes — light and dark share one code path; light appearance is unchanged.
 
 ## 2026-04-13
 - Added loading placeholders while CHIRP radio drivers initialize.
