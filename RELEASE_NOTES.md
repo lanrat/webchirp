@@ -6,6 +6,7 @@
 - Made the Serial Bridge controls a collapsible `<details>` on mobile (a static heading on desktop) so the channel list isn't pushed down. The mobile channel view stays the horizontally-scrolling table (a card view was tried and reverted by preference). Desktop layout is unchanged.
 - Added a WebUSB serial path so radios can be reached when native Web Serial is unavailable or cannot drive the adapter. A single device chooser dispatches the selected adapter to a chip-specific driver: a built-in FTDI-over-WebUSB driver for FTDI adapters (FT231X/FT232R, etc.), and Google's `web-serial-polyfill` for USB CDC-ACM devices. Other vendor-specific cables (CH340/CP2102/PL2303) are not supported over WebUSB yet.
 - Added a "Connect via WebUSB" button that forces the WebUSB path. This is needed on Chrome for Android (Chrome 148+), which exposes `navigator.serial` but only supports a limited set of devices — not FTDI/PL2303-class chips — so auto-detection alone would always pick the unsupported native transport. The default "Connect" button still prefers native Web Serial.
+- Known limitation (work paused): on Android the FTDI-over-WebUSB path connects but radio download does not yet complete (no clone-mode ACK; radio resets). Desktop native download works. See `WEBUSB_FTDI_STATUS.md` for full context and the resume plan.
 
 ## 2026-04-13
 - Added loading placeholders while CHIRP radio drivers initialize.
