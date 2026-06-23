@@ -802,6 +802,37 @@ button:not(:disabled):hover {
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Don't compress the 17 columns to fit the screen (which makes them
+     unreadable); let the table take its natural width and scroll horizontally,
+     with readable, tappable cells. */
+  #mem-table {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  #mem-table th,
+  #mem-table td {
+    white-space: nowrap;
+  }
+
+  #mem-table td input,
+  #mem-table td select {
+    min-width: 6rem;
+    min-height: 2.25rem;
+  }
+
+  /* Keep the auto-indexed Location column compact. */
+  #mem-table td:first-child,
+  #mem-table th:first-child {
+    min-width: 2.75rem;
+  }
+
+  #mem-table td:first-child input,
+  #mem-table td:first-child select,
+  #mem-table .channel-location-button {
+    min-width: 2.75rem;
+  }
+
   /* Comfortable touch targets for primary controls (table cells excluded). */
   .toolbar-actions button,
   .toolbar-link,
