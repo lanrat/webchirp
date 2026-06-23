@@ -1,3 +1,9 @@
+## 2026-06-23
+
+- First-load latency for the radio make/model dropdowns was dominated by `list_registered_radios()` importing *every* CHIRP driver (191 modules) in Pyodide. Each not-yet-cached import trips the `ChirpCdnFinder` hook, which does one blocking jsDelivr fetch per module file (plus its dependencies) via `_await_js`, so the dropdowns could not appear until ~191 serialized fetch→write→import→exec cycles (on top of Pyodide cold start) completed. The catalog only needs vendor/model/module/class/baud/isLive per radio, none of which requires running the driver in the browser.
+- Fix: precompute the catalog at build time from the local CHIRP submodule (`scripts/build-catalog.mjs` reusing the `TestRadioHarness` filesystem source) into `web/radio-catalog.json`, and have `handleListRadios` fetch that static file first, falling back to live in-browser enumeration only if it is missing/unusable. Pyodide now boots lazily (on first radio selection / CSV / serial action) instead of blocking the initial list render.
+- Generating the catalog from the submodule revision can drift from the browser runtime's pinned `CHIRP_REVISION`; module/class names are stable enough that the live metadata calls self-correct at selection time, and the live enumeration fallback covers a stale/missing file.
+
 ## 2026-03-14
 
 - `buttons.github.io/buttons.js` is not a viable GitHub star widget under cross-origin isolation. Even if the script is self-hosted, the widget path still depends on cross-origin embed resources, which conflicts with `COEP`/`COOP` on the static `codeplug.org` deployment.
