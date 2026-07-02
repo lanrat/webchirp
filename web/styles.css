@@ -549,6 +549,12 @@ button:not(:disabled):hover {
   text-align: left;
 }
 
+.channel-menu-popup .channel-menu-separator {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.25rem 0.2rem;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
