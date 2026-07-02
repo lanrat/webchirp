@@ -1,0 +1,56 @@
+name: Deploy to GitHub Pages
+
+on:
+  # Deploy whenever master changes.
+  push:
+    branches: [master]
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
+
+# Grant the token the permissions the Pages deploy needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it, but only keep one queued.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # No submodules: the deployed static site loads CHIRP from a CDN at
+        # runtime, and the build uses the committed web/radio-catalog.json.
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .tool-versions
+
+      # build-dist.mjs uses only Node built-ins and the committed catalog, so no
+      # npm install / submodule / native build is required. To regenerate the
+      # radio catalog from CHIRP instead, run `npm run build:dist` locally and
+      # commit the updated web/radio-catalog.json.
+      - name: Build dist
+        run: node scripts/build-dist.mjs
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
