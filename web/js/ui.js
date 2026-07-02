@@ -10,6 +10,13 @@ import {
   parsePrzemiennikiMetaJson,
   parsePrzemiennikiXml,
 } from "./datasources.js";
+import {
+  buildRowsFromClipboardText,
+  computeMovedRowOrder,
+  looksLikeChannelTsv,
+  rowLooksNonEmpty,
+  serializeRowsToTsv,
+} from "./clipboard.js";
 
 const DEFAULT_SAMPLE_CSV = `Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment\n0,Simplex1,146.520000,,0.600000,,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,National Calling\n1,RepeaterA,146.940000,-,0.600000,TSQL,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,Local repeater\n`;
 const ISSUE_TEMPLATE_NAME = "radio_bug_report.yml";
@@ -42,6 +49,11 @@ export function createUiController() {
   const radioUploadEl = document.querySelector("#radio-upload");
   const channelInsertEl = document.querySelector("#channel-insert");
   const channelRemoveEl = document.querySelector("#channel-remove");
+  const channelMoveUpEl = document.querySelector("#channel-move-up");
+  const channelMoveDownEl = document.querySelector("#channel-move-down");
+  const channelCopyEl = document.querySelector("#channel-copy");
+  const channelCutEl = document.querySelector("#channel-cut");
+  const channelPasteEl = document.querySelector("#channel-paste");
   const channelMenuToggleEl = document.querySelector("#channel-menu-toggle");
   const channelMenuPopupEl = document.querySelector("#channel-menu-popup");
   const channelAddGmrsEl = document.querySelector("#channel-add-gmrs");
@@ -1313,6 +1325,200 @@ export function createUiController() {
     setStatus(`Removed ${selectedIndexes.length} selected channel(s).`);
   }
 
+  function hasDomTextSelection() {
+    const selection = window.getSelection();
+    return Boolean(selection && !selection.isCollapsed && String(selection).trim() !== "");
+  }
+
+  // Channel clipboard/reorder shortcuts only apply in the channel view, with
+  // no modal open and no cell editor (or other field) focused. Copy/cut also
+  // defer to a regular DOM text selection (e.g. copying Debug Output text).
+  function channelShortcutsActive(event, { respectTextSelection = false } = {}) {
+    if (currentEditorView !== "channels") {
+      return false;
+    }
+    if (isPrzemiennikiModalOpen()) {
+      return false;
+    }
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("input, select, textarea, [contenteditable='true'], [contenteditable='']")
+    ) {
+      return false;
+    }
+    if (respectTextSelection && hasDomTextSelection()) {
+      return false;
+    }
+    return true;
+  }
+
+  // Serialize the explicitly selected rows (never the select-nothing-means-
+  // all-rows fallback: cut would otherwise silently delete every channel).
+  function selectedChannelTsv(actionLabel) {
+    const selectedIndexes = sortedSelectedRowIndexes();
+    if (selectedIndexes.length === 0) {
+      setStatus(`Select one or more channels to ${actionLabel}.`);
+      return null;
+    }
+    return {
+      tsv: serializeRowsToTsv(selectedIndexes.map((idx) => currentRows[idx])),
+      count: selectedIndexes.length,
+    };
+  }
+
+  function copySelectedChannels(event) {
+    const payload = selectedChannelTsv("copy");
+    if (!payload) {
+      return;
+    }
+    event.clipboardData.setData("text/plain", payload.tsv);
+    event.preventDefault();
+    setStatus(`Copied ${payload.count} channel(s) to clipboard.`);
+  }
+
+  function cutSelectedChannels(event) {
+    const payload = selectedChannelTsv("cut");
+    if (!payload) {
+      return;
+    }
+    event.clipboardData.setData("text/plain", payload.tsv);
+    event.preventDefault();
+    removeSelectedChannelRows();
+    setStatus(`Cut ${payload.count} channel(s) to clipboard.`);
+  }
+
+  async function writeChannelTsvToClipboard(actionLabel, remove) {
+    const payload = selectedChannelTsv(actionLabel);
+    if (!payload) {
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      setStatus(`Clipboard write not available; press Ctrl+${remove ? "X" : "C"} / Cmd+${remove ? "X" : "C"} instead.`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(payload.tsv);
+    } catch (error) {
+      logDebug(`CLIPBOARD write failed: ${error}`);
+      setStatus(`Clipboard write blocked; press Ctrl+${remove ? "X" : "C"} / Cmd+${remove ? "X" : "C"} instead.`);
+      return;
+    }
+    if (remove) {
+      removeSelectedChannelRows();
+      setStatus(`Cut ${payload.count} channel(s) to clipboard.`);
+    } else {
+      setStatus(`Copied ${payload.count} channel(s) to clipboard.`);
+    }
+  }
+
+  // Paste-overwrite starting at the first selected row (CHIRP desktop
+  // semantics): pasted rows replace existing rows downward, extend the list
+  // past the end, and require confirmation when non-empty rows would be
+  // overwritten. With no selection, pasted rows append at the end.
+  function pasteChannelsFromText(text) {
+    if (!currentHeaders.length) {
+      setStatus("No channel schema loaded yet.");
+      return;
+    }
+    if (!looksLikeChannelTsv(text)) {
+      setStatus("Clipboard does not contain tab-separated channel data.");
+      return;
+    }
+    const built = buildRowsFromClipboardText(text, {
+      createBlankRow: createBlankChannelRow,
+      setRowValue: setRowValueIfPresent,
+    });
+    const rows = built?.rows ?? [];
+    if (rows.length === 0) {
+      setStatus("No channels found in pasted text.");
+      return;
+    }
+    const selectedIndexes = sortedSelectedRowIndexes();
+    const startAt = selectedIndexes.length > 0 ? selectedIndexes[0] : currentRows.length;
+    const overwriteLocations = [];
+    for (let offset = 0; offset < rows.length && startAt + offset < currentRows.length; offset += 1) {
+      const target = currentRows[startAt + offset];
+      if (rowLooksNonEmpty(target)) {
+        overwriteLocations.push(String(target.Location ?? startAt + offset));
+      }
+    }
+    if (overwriteLocations.length > 0) {
+      const summary =
+        overwriteLocations.length === 1
+          ? `channel ${overwriteLocations[0]}`
+          : overwriteLocations.length > 10
+            ? `${overwriteLocations.length} existing channels`
+            : `channels ${overwriteLocations.join(", ")}`;
+      if (!window.confirm(`Pasted channels will overwrite ${summary}. Continue?`)) {
+        setStatus("Paste cancelled.");
+        return;
+      }
+    }
+    rows.forEach((row, offset) => {
+      const at = startAt + offset;
+      if (at < currentRows.length) {
+        currentRows[at] = row;
+      } else {
+        currentRows.push(row);
+      }
+    });
+    reindexLocationColumn();
+    clearInvalidHighlights();
+
+    selectedRowIndexes = new Set(rows.map((_, offset) => startAt + offset));
+    selectionAnchorIndex = startAt;
+    renderTable();
+    setStatus(`Pasted ${rows.length} channel(s) at channel ${startAt}.`);
+  }
+
+  async function pasteChannelsViaApi() {
+    if (!navigator.clipboard?.readText) {
+      setStatus("Clipboard read not available; press Ctrl+V / Cmd+V in the channel view instead.");
+      return;
+    }
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (error) {
+      logDebug(`CLIPBOARD read failed: ${error}`);
+      setStatus("Clipboard read blocked; press Ctrl+V / Cmd+V in the channel view instead.");
+      return;
+    }
+    pasteChannelsFromText(text);
+  }
+
+  // Move each selected row by one position, preserving relative order and
+  // clamping at the edges; Location renumbers to match the new order.
+  function moveSelectedChannelRows(direction) {
+    const selectedIndexes = sortedSelectedRowIndexes();
+    if (selectedIndexes.length === 0) {
+      setStatus("Select one or more channels to move.");
+      return;
+    }
+    const { order, selected, moved } = computeMovedRowOrder(
+      currentRows.length,
+      selectedIndexes,
+      direction,
+    );
+    if (!moved) {
+      setStatus(
+        direction < 0
+          ? "Selected channels are already at the top."
+          : "Selected channels are already at the bottom.",
+      );
+      return;
+    }
+    currentRows = order.map((idx) => currentRows[idx]);
+    reindexLocationColumn();
+    clearInvalidHighlights();
+
+    selectedRowIndexes = new Set(selected);
+    selectionAnchorIndex = direction < 0 ? Math.min(...selected) : Math.max(...selected);
+    renderTable();
+    setStatus(`Moved ${selected.length} channel(s) ${direction < 0 ? "up" : "down"}.`);
+  }
+
   // Create a table cell editor (input/select) based on CHIRP column metadata.
   function createCellEditor(row, rowIdx, column) {
     const meta = radioMetadata.columns?.[column] || {};
@@ -1947,9 +2153,27 @@ export function createUiController() {
     channelRemoveEl?.addEventListener("click", () => {
       removeSelectedChannelRows();
     });
+    channelMoveUpEl?.addEventListener("click", () => {
+      moveSelectedChannelRows(-1);
+    });
+    channelMoveDownEl?.addEventListener("click", () => {
+      moveSelectedChannelRows(1);
+    });
     channelMenuToggleEl?.addEventListener("click", (event) => {
       event.stopPropagation();
       toggleChannelMenu();
+    });
+    channelCopyEl?.addEventListener("click", async () => {
+      setChannelMenuOpen(false);
+      await writeChannelTsvToClipboard("copy", false);
+    });
+    channelCutEl?.addEventListener("click", async () => {
+      setChannelMenuOpen(false);
+      await writeChannelTsvToClipboard("cut", true);
+    });
+    channelPasteEl?.addEventListener("click", async () => {
+      setChannelMenuOpen(false);
+      await pasteChannelsViaApi();
     });
     channelAddGmrsEl?.addEventListener("click", () => {
       setChannelMenuOpen(false);
@@ -2025,7 +2249,42 @@ export function createUiController() {
           return;
         }
         setChannelMenuOpen(false);
+        return;
       }
+      if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        if (!channelShortcutsActive(event)) {
+          return;
+        }
+        event.preventDefault();
+        moveSelectedChannelRows(event.key === "ArrowUp" ? -1 : 1);
+      }
+    });
+
+    // Ctrl/Cmd+C, X, V arrive as native clipboard events, which supply
+    // clipboardData synchronously and need no permission prompt (unlike the
+    // async navigator.clipboard API used by the menu items). The guard defers
+    // to normal browser behavior inside inputs/selects and text selections.
+    document.addEventListener("copy", (event) => {
+      if (!channelShortcutsActive(event, { respectTextSelection: true })) {
+        return;
+      }
+      copySelectedChannels(event);
+    });
+
+    document.addEventListener("cut", (event) => {
+      if (!channelShortcutsActive(event, { respectTextSelection: true })) {
+        return;
+      }
+      cutSelectedChannels(event);
+    });
+
+    document.addEventListener("paste", (event) => {
+      if (!channelShortcutsActive(event)) {
+        return;
+      }
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      event.preventDefault();
+      pasteChannelsFromText(text);
     });
 
     document.querySelector("#load-sample").addEventListener("click", async () => {

@@ -1,5 +1,10 @@
 # Release Notes
 
+## 2026-07-02
+- Added a DOM-free channel clipboard module (`web/js/clipboard.js`) with unit tests: spreadsheet-compatible TSV serialize/parse using the canonical CHIRP CSV header, header-or-positional row mapping for pasted text, and a pure move-by-one row reorder algorithm.
+- Added channel copy/cut/paste, like desktop CHIRP: Ctrl/Cmd+C/X/V on selected rows plus Copy/Cut/Paste items in the channel actions menu. Copied channels are tab-separated text with the CHIRP CSV header, so they paste directly into Google Sheets/Excel, other webchirp tabs, and desktop CHIRP — and back. Paste overwrites downward from the first selected row (with a confirmation listing affected channels), extends the list past the end, and appends when nothing is selected; shortcuts stay out of the way while editing a cell or when text is selected.
+- Added channel reordering: Move Up/Move Down toolbar buttons and Alt+ArrowUp/Alt+ArrowDown move the selected rows by one position (preserving relative order, clamping at the edges), with Location renumbering automatically.
+
 ## 2026-06-23
 - Radio make/model dropdowns now populate instantly from a prebuilt static catalog (`web/radio-catalog.json`) instead of booting Pyodide and importing every CHIRP driver on first load; live driver enumeration remains as a fallback.
 - Added a `build:catalog` npm script (run automatically by `build:dist`) that regenerates the catalog from the local CHIRP submodule.
