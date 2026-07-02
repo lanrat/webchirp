@@ -15,6 +15,16 @@ const SIO_SET_MODEM_CTRL = 0x01;
 const SIO_SET_FLOW_CTRL = 0x02;
 const SIO_SET_BAUD_RATE = 0x03;
 const SIO_SET_DATA = 0x04;
+const SIO_SET_LATENCY_TIMER = 0x09;
+
+// SIO_RESET wValue variants: 0 resets the port, 1/2 purge the RX/TX FIFOs.
+const SIO_RESET_PURGE_RX = 0x0001;
+const SIO_RESET_PURGE_TX = 0x0002;
+
+// Latency timer in ms: how long the chip holds a partial packet before
+// flushing it to the host. The 16 ms power-on default adds up to 16 ms to
+// every short read; 4 ms keeps byte-oriented clone handshakes snappy.
+const LATENCY_TIMER_MS = 4;
 
 // 8 data bits, no parity, 1 stop bit.
 const DATA_8N1 = 0x0008;
@@ -136,10 +146,15 @@ export class FtdiSerialPort {
     }
 
     await this._controlOut(SIO_RESET, 0x0000, PORT_INDEX);
+    // Purge both FIFOs so stale bytes from a previous session can never be
+    // misread as protocol responses (mirrors native driver init).
+    await this._controlOut(SIO_RESET, SIO_RESET_PURGE_RX, PORT_INDEX);
+    await this._controlOut(SIO_RESET, SIO_RESET_PURGE_TX, PORT_INDEX);
     const baud = ftdiConvertBaudrate(baudRate);
     await this._controlOut(SIO_SET_BAUD_RATE, baud.value, baud.index);
     await this._controlOut(SIO_SET_DATA, DATA_8N1, PORT_INDEX);
     await this._controlOut(SIO_SET_FLOW_CTRL, 0x0000, PORT_INDEX);
+    await this._controlOut(SIO_SET_LATENCY_TIMER, LATENCY_TIMER_MS, PORT_INDEX);
 
     this._setupStreams();
   }

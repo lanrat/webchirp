@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BrowserSerialBridge } from "../web/js/serial.js";
+import {
+  BrowserSerialBridge,
+  LOOPBACK_TEST_HEX,
+  summarizeLoopback,
+} from "../web/js/serial.js";
 
 function setNavigator(value) {
   Object.defineProperty(globalThis, "navigator", {
@@ -91,4 +95,30 @@ test("reports unsupported and refuses to open with no serial transport", async (
   assert.equal(bridge.isSupported(), false);
   assert.deepEqual(bridge.getCapability(), { supported: false, native: false, webusb: false });
   await assert.rejects(() => bridge.open(9600), /Neither Web Serial nor WebUSB/);
+});
+
+test("summarizeLoopback: full echo means RX works (pursue hypothesis B)", () => {
+  const summary = summarizeLoopback(LOOPBACK_TEST_HEX, LOOPBACK_TEST_HEX);
+  assert.equal(summary.verdict, "ok");
+  assert.match(summary.message, /hypothesis B/);
+});
+
+test("summarizeLoopback: nothing received means RX is broken (hypothesis A)", () => {
+  const summary = summarizeLoopback(LOOPBACK_TEST_HEX, "");
+  assert.equal(summary.verdict, "rx-dead");
+  assert.match(summary.message, /hypothesis A/);
+});
+
+test("summarizeLoopback: corrupted or partial echo is a mismatch", () => {
+  const partial = summarizeLoopback(LOOPBACK_TEST_HEX, "55 AA 5A");
+  assert.equal(partial.verdict, "mismatch");
+  assert.match(partial.message, /received \[55 AA 5A\]/);
+  const garbled = summarizeLoopback("55 AA", "AA 55");
+  assert.equal(garbled.verdict, "mismatch");
+});
+
+test("summarizeLoopback normalizes hex formatting before comparing", () => {
+  // Lowercase, comma-separated RX still counts as a clean echo.
+  const summary = summarizeLoopback("55 AA", "55,aa");
+  assert.equal(summary.verdict, "ok");
 });

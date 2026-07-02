@@ -36,6 +36,40 @@ function concatUint8(a, b) {
   return out;
 }
 
+// Byte pattern for the TX->RX jumper loopback self-test: alternating-bit and
+// edge values so stuck lines, inverted logic, and framing errors all show up
+// as visible mismatches rather than accidental matches.
+export const LOOPBACK_TEST_HEX = "55 AA 5A A5 00 FF 0F F0 77 43";
+
+// Interpret a loopback self-test result. The test only makes sense with the
+// adapter's TX and RX pins physically jumpered; the verdict tells us which
+// half of the wire path to suspect (see WEBUSB_FTDI_STATUS.md section 5).
+export function summarizeLoopback(txHex, rxHex) {
+  const tx = bytesToHex(parseHex(txHex));
+  const rx = bytesToHex(parseHex(rxHex));
+  if (!rx) {
+    return {
+      verdict: "rx-dead",
+      message:
+        "Loopback FAILED: nothing received. The receive path is broken "
+        + "(hypothesis A) — fix the FTDI read path in ftdi-webusb.js.",
+    };
+  }
+  if (rx === tx) {
+    return {
+      verdict: "ok",
+      message:
+        "Loopback OK: all bytes echoed back. TX and RX both work "
+        + "(hypothesis B) — investigate DTR/RTS and line signaling next.",
+    };
+  }
+  return {
+    verdict: "mismatch",
+    message: `Loopback MISMATCH: sent [${tx}] received [${rx}]. `
+      + "Bytes arrive but are corrupted — suspect baud/framing or status-byte handling.",
+  };
+}
+
 function hasNativeSerial() {
   return typeof navigator !== "undefined" && "serial" in navigator;
 }

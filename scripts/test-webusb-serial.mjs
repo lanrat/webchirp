@@ -83,3 +83,47 @@ test("WebUSB provider dispatches non-FTDI devices to the CDC polyfill", async ()
   assert.ok(loaded, "CDC polyfill loader should be invoked for non-FTDI devices");
   assert.ok(port instanceof FakeCdcPort);
 });
+
+test("FtdiSerialPort.open() purges FIFOs and sets the latency timer", async () => {
+  const controlCalls = [];
+  const fakeDevice = {
+    vendorId: 0x0403,
+    productId: 0x6015,
+    configuration: {
+      interfaces: [
+        {
+          interfaceNumber: 0,
+          alternate: {
+            endpoints: [
+              { direction: "in", endpointNumber: 1, packetSize: 64 },
+              { direction: "out", endpointNumber: 2 },
+            ],
+          },
+        },
+      ],
+    },
+    open: async () => {},
+    claimInterface: async () => {},
+    controlTransferOut: async ({ request, value, index }) => {
+      controlCalls.push({ request, value, index });
+      return { status: "ok" };
+    },
+  };
+
+  const port = new FtdiSerialPort(fakeDevice);
+  await port.open({ baudRate: 9600 });
+
+  // Init sequence faithful to native drivers: reset, purge RX, purge TX,
+  // baud, framing, flow control, latency timer.
+  assert.deepEqual(controlCalls, [
+    { request: 0x00, value: 0x0000, index: 1 }, // SIO_RESET
+    { request: 0x00, value: 0x0001, index: 1 }, // purge RX FIFO
+    { request: 0x00, value: 0x0002, index: 1 }, // purge TX FIFO
+    { request: 0x03, value: 0x4138, index: 0 }, // 9600 baud divisor
+    { request: 0x04, value: 0x0008, index: 1 }, // 8N1
+    { request: 0x02, value: 0x0000, index: 1 }, // no flow control
+    { request: 0x09, value: 4, index: 1 }, // latency timer 4 ms
+  ]);
+  assert.ok(port.readable, "readable stream must be set up");
+  assert.ok(port.writable, "writable stream must be set up");
+});
