@@ -10,7 +10,7 @@ import {
   parsePrzemiennikiMetaJson,
   parsePrzemiennikiXml,
 } from "./datasources.js";
-import { LOOPBACK_TEST_HEX, summarizeLoopback } from "./serial.js";
+import { LOOPBACK_TEST_HEX, interpretRxDeadStats, summarizeLoopback } from "./serial.js";
 
 const DEFAULT_SAMPLE_CSV = `Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment\n0,Simplex1,146.520000,,0.600000,,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,National Calling\n1,RepeaterA,146.940000,-,0.600000,TSQL,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,Local repeater\n`;
 const ISSUE_TEMPLATE_NAME = "radio_bug_report.yml";
@@ -228,7 +228,19 @@ export function createUiController() {
       });
       const summary = summarizeLoopback(LOOPBACK_TEST_HEX, result?.rx?.hex || "");
       logDebug(`LOOPBACK verdict=${summary.verdict}`);
-      setStatus(summary.message);
+      // Raw read-path stats separate "USB pipe dead" from "pipe alive, FIFO
+      // empty" — the latter means the jumper (or line signals), not our code.
+      const stats = serialTransportController?.getReadDebugStats?.();
+      if (stats) {
+        logDebug(`LOOPBACK stats ${JSON.stringify(stats)}`);
+      }
+      if (summary.verdict === "rx-dead" && stats) {
+        const refined = interpretRxDeadStats(stats);
+        logDebug(`LOOPBACK cause=${refined.cause}`);
+        setStatus(`${summary.message} ${refined.message}`);
+      } else {
+        setStatus(summary.message);
+      }
     } catch (error) {
       reportActionError("Loopback test", error);
       logSerial(`ERROR ${errorSummary(error)}`);

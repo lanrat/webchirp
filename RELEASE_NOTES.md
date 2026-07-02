@@ -3,6 +3,8 @@
 ## 2026-07-02
 - Added a serial "Loopback Test" button (enabled while connected): with the adapter's TX and RX pins jumpered, it writes a known byte pattern and reads it back, reporting whether the receive path works, is dead, or corrupts data — the diagnostic that decides which fix the Android FTDI-over-WebUSB clone failure needs (see `WEBUSB_FTDI_STATUS.md` §5).
 - Hardened FTDI-over-WebUSB initialization to match native drivers: `open()` now purges the RX/TX FIFOs after reset (stale bytes can no longer masquerade as protocol responses) and sets the latency timer to 4 ms (down from the 16 ms power-on default) for snappier byte-oriented reads.
+- Fixed silent failure modes in the FTDI-over-WebUSB read path: a stalled bulk IN endpoint is now recovered with `clearHalt` and retried (previously it returned "stall" forever with no data and no error), babble results raise a real error, and the serial read loop logs why it ended instead of dying silently.
+- The Loopback Test now logs raw USB read-path stats (transfer completions, stalls, status bytes, payload bytes, last error) and refines a nothing-received verdict into a concrete cause: dead USB pipe, read error, or an alive pipe with an empty RX FIFO (which points at jumper contact or line signals rather than the read path).
 
 ## 2026-06-23
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.

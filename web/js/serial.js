@@ -70,6 +70,51 @@ export function summarizeLoopback(txHex, rxHex) {
   };
 }
 
+// Refine an rx-dead loopback verdict using raw USB read-path stats. An FTDI
+// chip completes a bulk IN transfer with its 2-byte status header roughly
+// every latency-timer tick even when idle, so on the webusb transport the
+// transfer counter is a heartbeat that separates "the USB read pipe is dead"
+// (a real read-path bug) from "the pipe is fine but no data reached the RX
+// FIFO" (bad jumper contact or a line/signal problem).
+export function interpretRxDeadStats(stats) {
+  const port = stats?.port;
+  if (stats?.transport !== "webusb" || !port) {
+    return {
+      cause: "unknown",
+      message: "No raw USB stats available for this transport; cannot refine further.",
+    };
+  }
+  if (port.lastError) {
+    return {
+      cause: "read-error",
+      message: `USB read failed: ${port.lastError} — the read path is dying, fix ftdi-webusb.js.`,
+    };
+  }
+  if (port.transfers === 0) {
+    return {
+      cause: "pipe-dead",
+      message:
+        "Zero bulk IN transfers completed — not even FTDI status heartbeats. "
+        + "The USB read pipe is dead (true hypothesis A: transferIn never completes).",
+    };
+  }
+  if (port.payloadBytes === 0) {
+    return {
+      cause: "fifo-empty",
+      message:
+        `USB read pipe is ALIVE (${port.transfers} transfers, ${port.rawBytes} status bytes, `
+        + `${port.stalls} stalls) but zero data bytes reached the FTDI RX FIFO. `
+        + "The read path works — re-check the TX-RX jumper contact, then suspect line signals (hypothesis B).",
+    };
+  }
+  return {
+    cause: "data-lost",
+    message:
+      `USB pipe delivered ${port.payloadBytes} payload byte(s) that never reached the app — `
+      + "suspect buffering between the port stream and the bridge.",
+  };
+}
+
 function hasNativeSerial() {
   return typeof navigator !== "undefined" && "serial" in navigator;
 }
@@ -87,6 +132,13 @@ export class BrowserSerialBridge {
     this.readBuffer = new Uint8Array(0);
     this.readWaiters = new Set();
     this.lastDeviceName = "";
+    // Optional diagnostic sink (wired to the debug log by the app). The read
+    // loop MUST report why it ended: a silently-dead read loop is
+    // indistinguishable from "no data" and cost us a debugging session.
+    this.onDebug = null;
+    this._readChunks = 0;
+    this._readBytes = 0;
+    this._readLoopState = "idle";
     // The resolved Web Serial provider (native navigator.serial or the WebUSB
     // chip-aware provider) and which transport it represents, set on connect.
     this.serial = null;
@@ -325,21 +377,53 @@ export class BrowserSerialBridge {
     return { prepared: true };
   }
 
+  _debug(message) {
+    try {
+      this.onDebug?.(message);
+    } catch {
+      // A broken debug sink must never take down the serial path.
+    }
+  }
+
+  // Snapshot of read-path health: bridge-level chunk counts plus the
+  // transport's raw USB accounting when the port exposes it (FtdiSerialPort).
+  getReadDebugStats() {
+    return {
+      loopState: this._readLoopState,
+      chunks: this._readChunks,
+      bytes: this._readBytes,
+      buffered: this.readBuffer.length,
+      transport: this.transport,
+      port: this.port?.getDebugStats?.() || null,
+    };
+  }
+
   async _startReadLoop() {
+    this._readChunks = 0;
+    this._readBytes = 0;
+    this._readLoopState = "running";
+    let endReason = "port closed";
     while (this.port && this.reader) {
       try {
         const { value, done } = await this.reader.read();
         if (done) {
+          endReason = "stream ended (done)";
           break;
         }
         if (value && value.length > 0) {
+          this._readChunks += 1;
+          this._readBytes += value.length;
           this.readBuffer = concatUint8(this.readBuffer, value);
           this._resolveReadWaiters(true);
         }
-      } catch {
+      } catch (error) {
+        endReason = `read error: ${error?.message || error}`;
         break;
       }
     }
+    this._readLoopState = `ended (${endReason})`;
+    // Surface loop death loudly; a disconnect is expected, an error is not.
+    this._debug(`Serial read loop ended: ${endReason}`);
     this._resolveReadWaiters(false);
   }
 

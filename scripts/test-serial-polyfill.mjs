@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BrowserSerialBridge,
   LOOPBACK_TEST_HEX,
+  interpretRxDeadStats,
   summarizeLoopback,
 } from "../web/js/serial.js";
 
@@ -121,4 +122,31 @@ test("summarizeLoopback normalizes hex formatting before comparing", () => {
   // Lowercase, comma-separated RX still counts as a clean echo.
   const summary = summarizeLoopback("55 AA", "55,aa");
   assert.equal(summary.verdict, "ok");
+});
+
+test("interpretRxDeadStats separates pipe-dead from fifo-empty via the FTDI heartbeat", () => {
+  const base = { transport: "webusb" };
+  const port = (overrides) => ({
+    transfers: 0, stalls: 0, rawBytes: 0, payloadBytes: 0, lastError: "", ...overrides,
+  });
+
+  // Non-webusb transports have no raw stats to reason about.
+  assert.equal(interpretRxDeadStats({ transport: "webserial", port: null }).cause, "unknown");
+  // A recorded transfer error means the read path is dying.
+  assert.equal(
+    interpretRxDeadStats({ ...base, port: port({ lastError: "boom" }) }).cause,
+    "read-error",
+  );
+  // Zero completed transfers: not even status heartbeats — the pipe is dead.
+  assert.equal(interpretRxDeadStats({ ...base, port: port({}) }).cause, "pipe-dead");
+  // Heartbeats without payload: the read path works, nothing hit the RX FIFO.
+  assert.equal(
+    interpretRxDeadStats({ ...base, port: port({ transfers: 40, rawBytes: 80 }) }).cause,
+    "fifo-empty",
+  );
+  // Payload seen at USB level but the app never got it.
+  assert.equal(
+    interpretRxDeadStats({ ...base, port: port({ transfers: 40, rawBytes: 90, payloadBytes: 10 }) }).cause,
+    "data-lost",
+  );
 });

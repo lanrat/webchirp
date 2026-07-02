@@ -127,3 +127,59 @@ test("FtdiSerialPort.open() purges FIFOs and sets the latency timer", async () =
   assert.ok(port.readable, "readable stream must be set up");
   assert.ok(port.writable, "writable stream must be set up");
 });
+
+test("FtdiSerialPort read path clears a stalled IN endpoint and keeps stats", async () => {
+  const clearHaltCalls = [];
+  const transferResults = [
+    { status: "stall" },
+    // 2-byte FTDI status header + one payload byte.
+    { status: "ok", data: new DataView(new Uint8Array([0x01, 0x60, 0xab]).buffer) },
+  ];
+  const fakeDevice = {
+    vendorId: 0x0403,
+    productId: 0x6015,
+    configuration: {
+      interfaces: [
+        {
+          interfaceNumber: 0,
+          alternate: {
+            endpoints: [
+              { direction: "in", endpointNumber: 1, packetSize: 64 },
+              { direction: "out", endpointNumber: 2 },
+            ],
+          },
+        },
+      ],
+    },
+    open: async () => {},
+    claimInterface: async () => {},
+    controlTransferOut: async () => ({ status: "ok" }),
+    clearHalt: async (direction, endpoint) => {
+      clearHaltCalls.push({ direction, endpoint });
+    },
+    transferIn: async () => {
+      const next = transferResults.shift();
+      if (next) {
+        return next;
+      }
+      return new Promise(() => {}); // no further data; hang like real hardware
+    },
+  };
+
+  const port = new FtdiSerialPort(fakeDevice);
+  await port.open({ baudRate: 9600 });
+  const reader = port.readable.getReader();
+  const { value } = await reader.read();
+
+  // The stall was cleared (not silently looped on) and the next packet's
+  // payload came through with the status header stripped.
+  assert.deepEqual(clearHaltCalls, [{ direction: "in", endpoint: 1 }]);
+  assert.deepEqual(Array.from(value), [0xab]);
+  assert.deepEqual(port.getDebugStats(), {
+    transfers: 2,
+    stalls: 1,
+    rawBytes: 3,
+    payloadBytes: 1,
+    lastError: "",
+  });
+});

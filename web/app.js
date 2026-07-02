@@ -17,10 +17,14 @@ const rpcClient = createRuntimeRpcClient({
 
 ui.setRuntimeApi(rpcClient);
 
+// Read-path diagnostics (loop death, USB stats) go to the serial log.
+serialBridge.onDebug = (message) => ui.logSerial(message);
+
 const serialCapability = serialBridge.getCapability();
 ui.setSerialController({
   capability: serialCapability,
   setPreferredTransport: (transport) => serialBridge.setPreferredTransport(transport),
+  getReadDebugStats: () => serialBridge.getReadDebugStats(),
 });
 ui.init(serialCapability.supported);
 if (serialCapability.webusb) {
