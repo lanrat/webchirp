@@ -1,5 +1,8 @@
 # Release Notes
 
+## 2026-07-02
+- Added a DOM-free channel clipboard module (`web/js/clipboard.js`) with unit tests: spreadsheet-compatible TSV serialize/parse using the canonical CHIRP CSV header, header-or-positional row mapping for pasted text, and a pure move-by-one row reorder algorithm.
+
 ## 2026-06-23
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.
