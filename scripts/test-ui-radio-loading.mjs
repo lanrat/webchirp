@@ -216,6 +216,7 @@ function installFakeDom() {
     ["#report-issue", "button"],
     ["#webserial-support-warning", "p"],
     ["#live-radio-support-warning", "p"],
+    ["#radio-search", "input"],
     ["#radio-make", "select"],
     ["#radio-model", "select"],
     ["#serial-connect-toggle", "button"],
@@ -290,6 +291,7 @@ function installFakeDom() {
 
   return {
     document,
+    radioSearchEl: document.querySelector("#radio-search"),
     radioMakeEl: document.querySelector("#radio-make"),
     radioModelEl: document.querySelector("#radio-model"),
   };
@@ -370,4 +372,49 @@ test("radio dropdowns show Loading... while CHIRP drivers are loading", async ()
   );
   assert.ok(!radioMakeEl.children.some((option) => option.textContent === "Loading..."));
   assert.ok(!radioModelEl.children.some((option) => option.textContent === "Loading..."));
+});
+
+test("search box filters make and model dropdowns across vendors", async () => {
+  const { radioSearchEl, radioMakeEl, radioModelEl } = installFakeDom();
+  const { createUiController } = await import("../web/js/ui.js");
+  const ui = createUiController();
+
+  ui.setRuntimeApi({
+    listRadios: async () => ({
+      radios: [
+        { vendor: "Acme", model: "Alpha", module: "alpha", className: "AlphaRadio", key: "alpha:AlphaRadio", isLiveRadio: false },
+        { vendor: "Acme", model: "Beta", module: "beta", className: "BetaRadio", key: "beta:BetaRadio", isLiveRadio: false },
+        { vendor: "Baofeng", model: "UV-5R", module: "uv5r", className: "BaofengUV5R", key: "uv5r:BaofengUV5R", isLiveRadio: false },
+      ],
+    }),
+    getRuntimeInfo: async () => ({ chirpRevision: "test-revision" }),
+    getRadioMetadata: async () => ({ headers: ["Location", "Name"], columns: {} }),
+    getRadioSettings: async () => ({ supported: false, available: false, requiresImage: false, message: "", groups: [] }),
+    parseCsv: async () => ({ headers: ["Location", "Name"], rows: [], errors: [] }),
+  });
+
+  await ui.init(true);
+
+  // Filter by a model string that only one vendor has.
+  radioSearchEl.value = "uv-5r";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.deepEqual(radioMakeEl.children.map((o) => o.textContent), ["Baofeng"]);
+  assert.deepEqual(radioModelEl.children.map((o) => o.textContent), ["UV-5R"]);
+
+  // Filter by vendor name shows all of that vendor's models.
+  radioSearchEl.value = "acme";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.deepEqual(radioMakeEl.children.map((o) => o.textContent), ["Acme"]);
+  assert.deepEqual(radioModelEl.children.map((o) => o.textContent), ["Alpha", "Beta"]);
+
+  // No matches shows a placeholder and clears the model list.
+  radioSearchEl.value = "nonesuch";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.deepEqual(radioMakeEl.children.map((o) => o.textContent), ["No matching radios"]);
+  assert.equal(radioModelEl.children.length, 0);
+
+  // Clearing the filter restores the full catalog.
+  radioSearchEl.value = "";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.deepEqual(radioMakeEl.children.map((o) => o.textContent), ["Acme", "Baofeng"]);
 });

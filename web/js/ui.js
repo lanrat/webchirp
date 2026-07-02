@@ -34,6 +34,7 @@ export function createUiController() {
   const reportIssueEl = document.querySelector("#report-issue");
   const serialSupportWarningEl = document.querySelector("#webserial-support-warning");
   const liveRadioSupportWarningEl = document.querySelector("#live-radio-support-warning");
+  const radioSearchEl = document.querySelector("#radio-search");
   const radioMakeEl = document.querySelector("#radio-make");
   const radioModelEl = document.querySelector("#radio-model");
   const serialConnectToggleEl = document.querySelector("#serial-connect-toggle");
@@ -68,6 +69,7 @@ export function createUiController() {
   let currentHeaders = [];
   let currentRows = [];
   let radioCatalog = [];
+  let radioFilterText = "";
   let selectedRadio = null;
   let radioMetadata = { headers: [], columns: {} };
   let radioSettingsState = { supported: false, available: false, requiresImage: false, message: "", groups: [] };
@@ -200,6 +202,7 @@ export function createUiController() {
     if (!radioCatalog.some((r) => r.vendor === make && r.key === key)) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = make;
     refreshModelOptions();
     radioModelEl.value = key;
@@ -640,6 +643,44 @@ export function createUiController() {
     );
   }
 
+  // Match a radio against a search query; every whitespace-separated token must
+  // appear somewhere in the "vendor model class" text (case-insensitive).
+  function radioMatchesFilter(radio, tokens) {
+    if (tokens.length === 0) {
+      return true;
+    }
+    const haystack = `${radio.vendor} ${radio.model} ${radio.className}`.toLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  }
+
+  // The catalog entries currently visible given the search filter.
+  function visibleCatalog() {
+    const tokens = radioFilterText.toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+      return radioCatalog;
+    }
+    return radioCatalog.filter((radio) => radioMatchesFilter(radio, tokens));
+  }
+
+  // Clear the search filter so programmatic selections see the full catalog.
+  function clearRadioFilter() {
+    radioFilterText = "";
+    if (radioSearchEl) {
+      radioSearchEl.value = "";
+    }
+  }
+
+  // Shared side effects after the selected radio changes via make/model/search.
+  function reloadForSelectedRadio() {
+    updateSerialActionState();
+    persistSelectedRadioCookie();
+    clearInvalidHighlights();
+    clearInvalidSettings();
+    Promise.all([loadSelectedRadioMetadata(), loadSelectedRadioSettings()])
+      .then(() => renderTable())
+      .catch((error) => reportActionError("Metadata load", error));
+  }
+
   function formatRadioModelOption(radio, hasDuplicateModel) {
     const modelLabel = radio.isLiveRadio ? `⚡ ${radio.model}` : radio.model;
     return hasDuplicateModel ? `${modelLabel} (${radio.className})` : modelLabel;
@@ -663,7 +704,7 @@ export function createUiController() {
   // Populate model dropdown for selected vendor and refresh selection state.
   function refreshModelOptions() {
     const vendor = radioMakeEl.value;
-    const models = radioCatalog.filter((r) => r.vendor === vendor);
+    const models = visibleCatalog().filter((r) => r.vendor === vendor);
     const modelCounts = new Map();
     for (const radio of models) {
       modelCounts.set(radio.model, (modelCounts.get(radio.model) || 0) + 1);
@@ -696,6 +737,7 @@ export function createUiController() {
     if (!target) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = target.vendor;
     refreshModelOptions();
     radioModelEl.value = target.key;
@@ -719,6 +761,7 @@ export function createUiController() {
     if (!fallback) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = fallback.vendor;
     refreshModelOptions();
     radioModelEl.value = fallback.key;
@@ -727,19 +770,31 @@ export function createUiController() {
     return true;
   }
 
-  // Populate make dropdown from catalog and initialize model options.
+  // Populate make dropdown from the (optionally filtered) catalog and initialize
+  // model options, preserving the current vendor when it is still visible.
   function refreshMakeOptions() {
-    const vendors = uniqueVendors(radioCatalog);
+    const previousVendor = radioMakeEl.value;
+    const vendors = uniqueVendors(visibleCatalog());
     radioMakeEl.innerHTML = "";
+
+    if (vendors.length === 0) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No matching radios";
+      radioMakeEl.appendChild(option);
+      radioModelEl.innerHTML = "";
+      selectedRadio = null;
+      updateSerialActionState();
+      return;
+    }
+
     for (const vendor of vendors) {
       const option = document.createElement("option");
       option.value = vendor;
       option.textContent = vendor;
       radioMakeEl.appendChild(option);
     }
-    if (vendors.length > 0) {
-      radioMakeEl.value = vendors[0];
-    }
+    radioMakeEl.value = vendors.includes(previousVendor) ? previousVendor : vendors[0];
     refreshModelOptions();
   }
 
@@ -2035,18 +2090,15 @@ export function createUiController() {
       }
     });
 
+    radioSearchEl?.addEventListener("input", () => {
+      radioFilterText = String(radioSearchEl.value || "").trim();
+      refreshMakeOptions();
+      reloadForSelectedRadio();
+    });
+
     radioMakeEl.addEventListener("change", () => {
       refreshModelOptions();
-      updateSerialActionState();
-      persistSelectedRadioCookie();
-      clearInvalidHighlights();
-      clearInvalidSettings();
-      Promise.all([
-        loadSelectedRadioMetadata(),
-        loadSelectedRadioSettings(),
-      ])
-        .then(() => renderTable())
-        .catch((error) => reportActionError("Metadata load", error));
+      reloadForSelectedRadio();
     });
 
     radioModelEl.addEventListener("change", () => {
@@ -2057,16 +2109,7 @@ export function createUiController() {
           `RADIO SELECT ${makeModelLabel(selectedRadio)} (${selectedRadio.module}.${selectedRadio.className})`,
         );
       }
-      updateSerialActionState();
-      persistSelectedRadioCookie();
-      clearInvalidHighlights();
-      clearInvalidSettings();
-      Promise.all([
-        loadSelectedRadioMetadata(),
-        loadSelectedRadioSettings(),
-      ])
-        .then(() => renderTable())
-        .catch((error) => reportActionError("Metadata load", error));
+      reloadForSelectedRadio();
     });
 
     viewChannelsEl?.addEventListener("click", () => {
