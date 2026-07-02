@@ -98,10 +98,10 @@ test("reports unsupported and refuses to open with no serial transport", async (
   await assert.rejects(() => bridge.open(9600), /Neither Web Serial nor WebUSB/);
 });
 
-test("summarizeLoopback: full echo means RX works (pursue hypothesis B)", () => {
+test("summarizeLoopback: full echo means TX and RX both work", () => {
   const summary = summarizeLoopback(LOOPBACK_TEST_HEX, LOOPBACK_TEST_HEX);
   assert.equal(summary.verdict, "ok");
-  assert.match(summary.message, /hypothesis B/);
+  assert.match(summary.message, /both work/);
 });
 
 test("summarizeLoopback: nothing received means RX is broken (hypothesis A)", () => {

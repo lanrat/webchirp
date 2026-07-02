@@ -58,9 +58,7 @@ export function summarizeLoopback(txHex, rxHex) {
   if (rx === tx) {
     return {
       verdict: "ok",
-      message:
-        "Loopback OK: all bytes echoed back. TX and RX both work "
-        + "(hypothesis B) — investigate DTR/RTS and line signaling next.",
+      message: "Loopback OK: all bytes echoed back — the serial TX and RX paths both work.",
     };
   }
   return {
