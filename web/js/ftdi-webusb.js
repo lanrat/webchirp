@@ -199,31 +199,41 @@ export class FtdiSerialPort {
     const isClosed = () => this._closed;
 
     this.readable = new ReadableStream({
+      // CRITICAL: pull must not resolve until it has enqueued payload. The
+      // FTDI chip completes a bulk IN transfer with a 2-byte status header
+      // (and usually nothing else) every latency-timer tick; per the Streams
+      // spec, a pull that resolves WITHOUT enqueuing is never re-invoked
+      // until a new read request or enqueue occurs — so returning early on a
+      // status-only packet wedged the read path permanently after the first
+      // idle packet. Loop over status-only packets and stalls instead.
       pull: async (controller) => {
         try {
-          const result = await device.transferIn(inEndpoint, packetSize);
-          stats.transfers += 1;
-          if (result.status === "stall") {
-            // A stalled IN endpoint returns "stall" forever until the halt is
-            // cleared; without this the read path goes permanently silent.
-            stats.stalls += 1;
-            await device.clearHalt("in", inEndpoint);
-            return;
-          }
-          if (result.status === "babble") {
-            throw new Error("FTDI: babble on bulk IN endpoint (device sent more data than requested)");
-          }
-          if (result.status === "ok" && result.data && result.data.byteLength > 0) {
-            const bytes = new Uint8Array(
-              result.data.buffer,
-              result.data.byteOffset,
-              result.data.byteLength,
-            );
-            stats.rawBytes += bytes.length;
-            const payload = stripFtdiStatusBytes(bytes);
-            if (payload.length > 0) {
-              stats.payloadBytes += payload.length;
-              controller.enqueue(payload);
+          while (!isClosed()) {
+            const result = await device.transferIn(inEndpoint, packetSize);
+            stats.transfers += 1;
+            if (result.status === "stall") {
+              // A stalled IN endpoint returns "stall" forever until the halt
+              // is cleared; without this the read path goes permanently silent.
+              stats.stalls += 1;
+              await device.clearHalt("in", inEndpoint);
+              continue;
+            }
+            if (result.status === "babble") {
+              throw new Error("FTDI: babble on bulk IN endpoint (device sent more data than requested)");
+            }
+            if (result.status === "ok" && result.data && result.data.byteLength > 0) {
+              const bytes = new Uint8Array(
+                result.data.buffer,
+                result.data.byteOffset,
+                result.data.byteLength,
+              );
+              stats.rawBytes += bytes.length;
+              const payload = stripFtdiStatusBytes(bytes);
+              if (payload.length > 0) {
+                stats.payloadBytes += payload.length;
+                controller.enqueue(payload);
+                return;
+              }
             }
           }
         } catch (error) {

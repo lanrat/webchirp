@@ -98,6 +98,19 @@ export function interpretRxDeadStats(stats) {
         + "The USB read pipe is dead (true hypothesis A: transferIn never completes).",
     };
   }
+  if (port.payloadBytes === 0 && port.transfers < 25) {
+    // An FTDI completes a status-header transfer every latency tick (4 ms),
+    // so a loopback window should show hundreds of transfers. A handful that
+    // never grows means reads stopped being ISSUED — the pull/read scheduling
+    // wedged (e.g. a stream pull that resolved without enqueuing), not an
+    // empty FIFO.
+    return {
+      cause: "pull-starved",
+      message:
+        `Only ${port.transfers} bulk IN transfer(s) completed and then reads stopped — `
+        + "the read path wedged after status-only packets (hypothesis A: fix pull scheduling in ftdi-webusb.js).",
+    };
+  }
   if (port.payloadBytes === 0) {
     return {
       cause: "fifo-empty",

@@ -139,7 +139,14 @@ test("interpretRxDeadStats separates pipe-dead from fifo-empty via the FTDI hear
   );
   // Zero completed transfers: not even status heartbeats — the pipe is dead.
   assert.equal(interpretRxDeadStats({ ...base, port: port({}) }).cause, "pipe-dead");
-  // Heartbeats without payload: the read path works, nothing hit the RX FIFO.
+  // A couple of transfers that then stop is a wedged read path, not an empty
+  // FIFO — the signature of the pull-without-enqueue deadlock.
+  assert.equal(
+    interpretRxDeadStats({ ...base, port: port({ transfers: 2, rawBytes: 4 }) }).cause,
+    "pull-starved",
+  );
+  // A sustained heartbeat without payload: the read path works, nothing hit
+  // the RX FIFO.
   assert.equal(
     interpretRxDeadStats({ ...base, port: port({ transfers: 40, rawBytes: 80 }) }).cause,
     "fifo-empty",

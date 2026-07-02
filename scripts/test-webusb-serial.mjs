@@ -183,3 +183,59 @@ test("FtdiSerialPort read path clears a stalled IN endpoint and keeps stats", as
     lastError: "",
   });
 });
+
+test("FtdiSerialPort read path survives status-only packets (the Android wedge)", async () => {
+  // Regression for the read-path deadlock found via the Android loopback
+  // test (stats: 2 transfers, 4 status bytes, then silence forever): a
+  // stream pull that resolved without enqueuing after a status-only packet
+  // was never re-invoked, wedging all reads. The pull must keep polling
+  // through idle status headers until real payload arrives.
+  const statusOnly = () => ({
+    status: "ok",
+    data: new DataView(new Uint8Array([0x01, 0x60]).buffer),
+  });
+  const transferResults = [
+    statusOnly(),
+    statusOnly(),
+    statusOnly(),
+    { status: "ok", data: new DataView(new Uint8Array([0x01, 0x60, 0x50, 0xbb]).buffer) },
+  ];
+  const fakeDevice = {
+    vendorId: 0x0403,
+    productId: 0x6015,
+    configuration: {
+      interfaces: [
+        {
+          interfaceNumber: 0,
+          alternate: {
+            endpoints: [
+              { direction: "in", endpointNumber: 1, packetSize: 64 },
+              { direction: "out", endpointNumber: 2 },
+            ],
+          },
+        },
+      ],
+    },
+    open: async () => {},
+    claimInterface: async () => {},
+    controlTransferOut: async () => ({ status: "ok" }),
+    transferIn: async () => {
+      const next = transferResults.shift();
+      if (next) {
+        return next;
+      }
+      return new Promise(() => {});
+    },
+  };
+
+  const port = new FtdiSerialPort(fakeDevice);
+  await port.open({ baudRate: 9600 });
+  const reader = port.readable.getReader();
+  // Before the fix this read() hung forever after 1-2 status-only packets.
+  const { value } = await reader.read();
+
+  assert.deepEqual(Array.from(value), [0x50, 0xbb]);
+  const stats = port.getDebugStats();
+  assert.equal(stats.transfers, 4, "must keep polling through idle packets");
+  assert.equal(stats.payloadBytes, 2);
+});
