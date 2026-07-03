@@ -1,5 +1,8 @@
 # Release Notes
 
+## 2026-07-03
+- Added a progress bar for radio download and upload, shown in the Serial Bridge panel under the Download/Upload buttons. CHIRP drivers already report per-block progress through their status callback; those reports now drive a live bar with the driver's own phase message and a percentage, starting indeterminate until the first block count arrives. The per-block "msg: cur/max" debug log lines are demoted to logging only phase changes, so clone operations no longer flood the debug output.
+
 ## 2026-06-23
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.

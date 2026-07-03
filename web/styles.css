@@ -278,6 +278,26 @@ button:not(:disabled):hover {
   grid-column: 1 / -1;
 }
 
+.clone-progress {
+  margin: 0.1rem 0 0.6rem;
+}
+
+.clone-progress-text {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.clone-progress progress {
+  display: block;
+  width: 100%;
+  height: 0.6rem;
+  accent-color: var(--accent);
+}
+
 .serial-log {
   margin: 0.6rem 0 0;
   min-height: 92px;

@@ -18,6 +18,7 @@ from js import (
     fetch_chirp_source,
     serial_close,
     serial_prepare_clone,
+    serial_progress,
     serial_reset_buffers,
     serial_log,
     serial_open,
@@ -508,15 +509,30 @@ def _best_effort_radio_instance(module_name: str, class_name: str, require_cache
     return radio
 
 
+_last_status_msg = None
+
+
 def _status_to_log(status):
-    """Adapt CHIRP status callbacks into debug log lines."""
-    msg = getattr(status, "msg", "")
+    """Forward CHIRP status callbacks to the UI progress display.
+
+    Drivers report one status per transferred block; forwarding each report to
+    the progress bar keeps it live, while the debug log only records message
+    changes (phase transitions) instead of one line per block.
+    """
+    global _last_status_msg
+    msg = str(getattr(status, "msg", "") or "")
     cur = getattr(status, "cur", None)
     maxv = getattr(status, "max", None)
-    if cur is None or maxv is None:
-        serial_log(str(msg))
-    else:
-        serial_log(f"{msg}: {cur}/{maxv}")
+    try:
+        if cur is None or maxv is None:
+            serial_progress(-1, -1, msg)
+        else:
+            serial_progress(int(cur), int(maxv), msg)
+    except Exception:
+        pass  # A progress display failure must never break a clone.
+    if msg and msg != _last_status_msg:
+        _last_status_msg = msg
+        serial_log(msg)
 
 
 def _iter_memory_numbers(radio):
