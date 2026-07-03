@@ -401,17 +401,11 @@ export function createSerialRpcHandler({ serialBridge, logSerial }) {
   }
 
   async function handleWriteBytes(payload = {}) {
-    const bytes = payload.bytes || [];
-    const res = await serialBridge.writeBytes(bytes);
-    logSerial(`TX ${bytesToHex(bytes) || "<none>"}`);
-    return res;
+    return serialBridge.writeBytes(payload.bytes || []);
   }
 
   async function handleReadBytes(payload = {}) {
-    const wanted = Number(payload.count || 0);
-    const bytes = await serialBridge.readBytes(payload.count, payload.timeoutMs);
-    logSerial(`RX ${bytesToHex(bytes) || "<none>"} (${bytes.length}/${wanted})`);
-    return bytes;
+    return serialBridge.readBytes(payload.count, payload.timeoutMs);
   }
 
   async function handleLog(payload = {}) {
