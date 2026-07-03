@@ -50,6 +50,12 @@ function installSerialBridgeGlobals() {
     serialRpc("log", {
       message: String(message || ""),
     });
+  globalThis.serial_progress = (cur, max, msg) =>
+    serialRpc("progress", {
+      cur: Number(cur),
+      max: Number(max),
+      msg: String(msg || ""),
+    });
   globalThis.serial_prepare_clone = (wantsDtr, wantsRts, settleMs) =>
     serialRpc("prepareClone", {
       wantsDtr: Boolean(wantsDtr),

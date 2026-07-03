@@ -8,6 +8,7 @@ const serialBridge = new BrowserSerialBridge();
 const serialRpcHandler = createSerialRpcHandler({
   serialBridge,
   logSerial: ui.logSerial,
+  onProgress: ui.updateCloneProgress,
 });
 
 const rpcClient = createRuntimeRpcClient({

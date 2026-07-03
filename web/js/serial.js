@@ -375,7 +375,7 @@ export class BrowserSerialBridge {
 }
 
 // Build a serial RPC dispatcher used by runtime bridge messages.
-export function createSerialRpcHandler({ serialBridge, logSerial }) {
+export function createSerialRpcHandler({ serialBridge, logSerial, onProgress }) {
   async function handleOpen(payload = {}) {
     const res = await serialBridge.open(payload.baudRate);
     logSerial(res.message);
@@ -413,6 +413,13 @@ export function createSerialRpcHandler({ serialBridge, logSerial }) {
     return { logged: true };
   }
 
+  // CHIRP drivers report clone progress once per transferred block; forward
+  // it to the UI (cur/max may be -1 when a driver reports no counts).
+  async function handleProgress(payload = {}) {
+    onProgress?.(Number(payload.cur), Number(payload.max), String(payload.msg || ""));
+    return { reported: true };
+  }
+
   async function handlePrepareClone(payload = {}) {
     const res = await serialBridge.prepareClone(
       payload.wantsDtr,
@@ -442,6 +449,7 @@ export function createSerialRpcHandler({ serialBridge, logSerial }) {
     writeBytes: handleWriteBytes,
     readBytes: handleReadBytes,
     log: handleLog,
+    progress: handleProgress,
     prepareClone: handlePrepareClone,
     resetBuffers: handleResetBuffers,
     getPortInfo: handleGetPortInfo,
