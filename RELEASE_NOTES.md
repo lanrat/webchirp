@@ -1,6 +1,7 @@
 # Release Notes
 
 ## 2026-07-03
+- Updated the "Connect via WebUSB" hover text to be chip-agnostic and moved the supported/unsupported adapter lists into a single exported constant in `webusb-serial.js`, so the startup hint (and any future user-facing text) stays in sync automatically when chip drivers are added.
 - Added a native Prolific PL2303-over-WebUSB driver, so PL2303 programming cables work on Android Chrome alongside FTDI. The driver detects the chip generation from the device descriptor (original 01, HX-era, TA/TB, and the newer HXN family: GC/GB/GT/GL/GE/GS) and applies the matching register map: legacy chips get the kernel-documented startup handshake and register purges, HXN chips skip the legacy startup and use their own reset/flow-control registers. DTR/RTS control lines are supported (required for radio cloning). Vendor requests follow the Linux kernel driver (vendor-type writes, bRequest 0x01 legacy / 0x80-0x81 HXN), fixing two request-type bugs present in the existing open-source WebUSB ports this work was checked against. Verified end-to-end on Android Chrome with a PL2303 cable and a real radio.
 
 ## 2026-07-02

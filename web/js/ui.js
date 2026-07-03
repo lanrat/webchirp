@@ -638,7 +638,7 @@ export function createUiController() {
       webusbConnectToggleEl.disabled = !actionsAllowed || serialConnected;
       webusbConnectToggleEl.title = liveRadioUnsupported
         ? "Live-mode radios are not supported in this UI yet"
-        : "Connect over WebUSB (FTDI FT231X/FT232R and USB CDC-ACM adapters)";
+        : "Connect over WebUSB, for USB-serial adapters native Web Serial cannot drive";
     }
 
 
