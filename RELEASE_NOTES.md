@@ -1,5 +1,8 @@
 # Release Notes
 
+## 2026-07-03
+- Added a native Prolific PL2303-over-WebUSB driver, so PL2303 programming cables work on Android Chrome alongside FTDI. The driver detects the chip generation from the device descriptor (original 01, HX-era, TA/TB, and the newer HXN family: GC/GB/GT/GL/GE/GS) and applies the matching register map: legacy chips get the kernel-documented startup handshake and register purges, HXN chips skip the legacy startup and use their own reset/flow-control registers. DTR/RTS control lines are supported (required for radio cloning). Vendor requests follow the Linux kernel driver (vendor-type writes, bRequest 0x01 legacy / 0x80-0x81 HXN), fixing two request-type bugs present in the existing open-source WebUSB ports this work was checked against. Verified end-to-end on Android Chrome with a PL2303 cable and a real radio.
+
 ## 2026-07-02
 - Added a DOM-free channel clipboard module (`web/js/clipboard.js`) with unit tests: spreadsheet-compatible TSV serialize/parse using the canonical CHIRP CSV header, header-or-positional row mapping for pasted text, and a pure move-by-one row reorder algorithm.
 - Added channel copy/cut/paste, like desktop CHIRP: Ctrl/Cmd+C/X/V on selected rows plus Copy/Cut/Paste items in the channel actions menu. Copied channels are tab-separated text with the CHIRP CSV header, so they paste directly into Google Sheets/Excel, other webchirp tabs, and desktop CHIRP — and back. Paste overwrites downward from the first selected row (with a confirmation listing affected channels), extends the list past the end, and appends when nothing is selected; shortcuts stay out of the way while editing a cell or when text is selected.

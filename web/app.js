@@ -28,6 +28,6 @@ ui.setSerialController({
 ui.init(serialCapability.supported);
 if (serialCapability.webusb) {
   ui.logSerial(
-    "If 'Connect' does not find your USB-serial adapter (e.g. an FTDI cable on Android), use 'Connect via WebUSB'. WebUSB supports FTDI (FT231X/FT232R, etc.) and USB CDC-ACM devices; other vendor chips (CH340/CP2102/PL2303) are not supported yet.",
+    "If 'Connect' does not find your USB-serial adapter (e.g. an FTDI or PL2303 cable on Android), use 'Connect via WebUSB'. WebUSB supports FTDI (FT231X/FT232R, etc.), Prolific PL2303 (HX/TA/TB/HXN), and USB CDC-ACM devices; other vendor chips (CH340/CP2102) are not supported yet.",
   );
 }
