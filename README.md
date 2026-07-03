@@ -31,6 +31,30 @@ Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/).
 Serial access requires a browser with Web Serial support and a secure context
 (`http://localhost` works).
 
+There are two connect buttons:
+
+- **Connect** uses native Web Serial when available, otherwise WebUSB.
+- **Connect via WebUSB** forces the WebUSB path. Use this when native Web Serial
+  exists but cannot drive your adapter — notably Chrome on Android, which now
+  exposes `navigator.serial` but only supports a limited set of devices (not
+  FTDI/PL2303-class USB UART chips). There is no way to detect this in advance,
+  hence the explicit button.
+
+Over WebUSB a single device chooser is shown and the selected adapter is
+dispatched to a chip-specific driver:
+
+- **FTDI** adapters (FT231X, FT232R, ...) use a built-in FTDI-over-WebUSB
+  driver. **This is the only chip family the WebUSB path has been verified to
+  work with** (tested end-to-end on Android Chrome with an FT231X cable and a
+  Baofeng UV-5R).
+- **USB CDC-ACM** devices are dispatched to Google's `web-serial-polyfill`.
+  This path is wired up but untested — most radio programming cables are not
+  CDC-ACM, so in practice the WebUSB fallback only works with FTDI cables.
+- Other vendor-specific UART bridges (CH340, CP2102, PL2303) are **not
+  supported** over WebUSB; they need chip-specific drivers that have not been
+  written yet (see `web/js/ftdi-webusb.js` for the pattern) and still require
+  native Web Serial on desktop.
+
 `npm run dev` serves with cross-origin isolation headers (`COOP`/`COEP`) so
 Pyodide synchronous JS bridging can use `SharedArrayBuffer` without warnings.
 

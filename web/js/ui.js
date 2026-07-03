@@ -45,6 +45,7 @@ export function createUiController() {
   const radioMakeEl = document.querySelector("#radio-make");
   const radioModelEl = document.querySelector("#radio-model");
   const serialConnectToggleEl = document.querySelector("#serial-connect-toggle");
+  const webusbConnectToggleEl = document.querySelector("#serial-connect-webusb");
   const radioDownloadEl = document.querySelector("#radio-download");
   const radioUploadEl = document.querySelector("#radio-upload");
   const channelInsertEl = document.querySelector("#channel-insert");
@@ -101,6 +102,8 @@ export function createUiController() {
   let activeRepeaterQuerySource = "przemienniki";
   let sidebarControlsEnabled = false;
   let serialConnected = false;
+  let serialTransportController = null;
+  let serialCapability = { supported: false, native: false, webusb: false };
 
   const repeaterQuerySources = {
     przemienniki: {
@@ -139,6 +142,79 @@ export function createUiController() {
   function setRuntimeApi(api) {
     runtimeApi = api;
   }
+
+  // Wire the serial bridge's transport controls (capability + forced transport)
+  // so the UI can offer an explicit WebUSB connect path.
+  function setSerialController(controller) {
+    serialTransportController = controller || null;
+    serialCapability = controller?.capability || serialCapability;
+    updateSerialActionState();
+  }
+
+  function setSerialButtonsBusy(busy) {
+    if (serialConnectToggleEl) {
+      serialConnectToggleEl.disabled = busy;
+    }
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.disabled = busy;
+    }
+  }
+
+  // Connect using the requested transport ("auto" or "webusb").
+  async function connectSerial(preferredTransport) {
+    if (serialConnected) {
+      return;
+    }
+    serialTransportController?.setPreferredTransport(preferredTransport);
+    setSerialButtonsBusy(true);
+    try {
+      const baudRate = Number(selectedRadio?.baudRate || 9600);
+      setStatus(`Connecting serial${preferredTransport === "webusb" ? " via WebUSB" : ""}...`);
+      const result = await requireRuntimeApi().serialConnect({ baudRate });
+      serialConnected = Boolean(result?.connected);
+      if (result?.deviceName) {
+        logDebug(`SERIAL DEVICE ${result.deviceName}`);
+      }
+      if (result?.transport) {
+        logSerial(`Transport: ${result.transport}`);
+      }
+      if (result?.usbVendorId) {
+        lastUsbVendorId = result.usbVendorId;
+      }
+      if (result?.usbProductId) {
+        lastUsbProductId = result.usbProductId;
+      }
+      if (lastUsbVendorId || lastUsbProductId) {
+        logDebug(`SERIAL USB ID ${lastUsbVendorId || "unknown"}:${lastUsbProductId || "unknown"}`);
+      }
+      setStatus(result.message || "Serial connected.");
+    } catch (error) {
+      reportActionError("Serial connect", error);
+      logSerial(`ERROR ${errorSummary(error)}`);
+    } finally {
+      setSerialButtonsBusy(false);
+      refreshSerialConnectToggleLabel();
+      updateSerialActionState();
+    }
+  }
+
+  async function disconnectSerial() {
+    setSerialButtonsBusy(true);
+    try {
+      setStatus("Disconnecting serial...");
+      const result = await requireRuntimeApi().serialDisconnect();
+      serialConnected = Boolean(result?.connected);
+      setStatus(result.message || "Serial disconnected.");
+    } catch (error) {
+      reportActionError("Serial disconnect", error);
+      logSerial(`ERROR ${errorSummary(error)}`);
+    } finally {
+      setSerialButtonsBusy(false);
+      refreshSerialConnectToggleLabel();
+      updateSerialActionState();
+    }
+  }
+
 
   function setSidebarControlsEnabled(enabled) {
     sidebarControlsEnabled = Boolean(enabled);
@@ -556,6 +632,15 @@ export function createUiController() {
         ? "Live-mode radios are not supported in this UI yet"
         : "";
     }
+
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.hidden = !serialCapability.webusb;
+      webusbConnectToggleEl.disabled = !actionsAllowed || serialConnected;
+      webusbConnectToggleEl.title = liveRadioUnsupported
+        ? "Live-mode radios are not supported in this UI yet"
+        : "Connect over WebUSB (FTDI FT231X/FT232R and USB CDC-ACM adapters)";
+    }
+
 
     if (radioDownloadEl) {
       radioDownloadEl.disabled = !actionsAllowed;
@@ -2384,44 +2469,18 @@ export function createUiController() {
       renderSettingsPanel();
     });
 
-    serialConnectToggleEl?.addEventListener("click", async () => {
-      serialConnectToggleEl.disabled = true;
-      try {
-        if (serialConnected) {
-          setStatus("Disconnecting serial...");
-          const result = await requireRuntimeApi().serialDisconnect();
-          serialConnected = Boolean(result?.connected);
-          refreshSerialConnectToggleLabel();
-          setStatus(result.message || "Serial disconnected.");
-          return;
-        }
-
-        const baudRate = Number(selectedRadio?.baudRate || 9600);
-        setStatus("Connecting serial...");
-        const result = await requireRuntimeApi().serialConnect({ baudRate });
-        serialConnected = Boolean(result?.connected);
-        refreshSerialConnectToggleLabel();
-        if (result?.deviceName) {
-          logDebug(`SERIAL DEVICE ${result.deviceName}`);
-        }
-        if (result?.usbVendorId) {
-          lastUsbVendorId = result.usbVendorId;
-        }
-        if (result?.usbProductId) {
-          lastUsbProductId = result.usbProductId;
-        }
-        if (lastUsbVendorId || lastUsbProductId) {
-          logDebug(`SERIAL USB ID ${lastUsbVendorId || "unknown"}:${lastUsbProductId || "unknown"}`);
-        }
-        setStatus(result.message || "Serial connected.");
-      } catch (error) {
-        const action = serialConnected ? "Serial disconnect" : "Serial connect";
-        reportActionError(action, error);
-        logSerial(`ERROR ${errorSummary(error)}`);
-      } finally {
-        serialConnectToggleEl.disabled = false;
+    serialConnectToggleEl?.addEventListener("click", () => {
+      if (serialConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial("auto");
       }
     });
+
+    webusbConnectToggleEl?.addEventListener("click", () => {
+      connectSerial("webusb");
+    });
+
 
     document.querySelector("#serial-transaction")?.addEventListener("click", async () => {
       const txHex = document.querySelector("#tx-hex")?.value || "";
@@ -2442,6 +2501,26 @@ export function createUiController() {
     document.querySelector("#debug-clear").addEventListener("click", () => {
       debugOutputEl.value = "";
       lastErrorSummary = "";
+    });
+
+    document.querySelector("#debug-copy")?.addEventListener("click", async () => {
+      const text = debugOutputEl.value || "";
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          // Fallback for browsers/contexts without the async clipboard API.
+          debugOutputEl.focus();
+          debugOutputEl.select();
+          document.execCommand("copy");
+        }
+        setStatus("Debug log copied to clipboard.");
+      } catch {
+        // Last resort: select the text so the user can copy manually.
+        debugOutputEl.focus();
+        debugOutputEl.select();
+        setStatus("Could not copy automatically; log text is selected — copy it manually.");
+      }
     });
 
     reportIssueEl?.addEventListener("click", () => {
@@ -2566,6 +2645,7 @@ export function createUiController() {
 
   return {
     setRuntimeApi,
+    setSerialController,
     setStatus,
     logSerial,
     logDebug,
