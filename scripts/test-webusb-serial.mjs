@@ -63,9 +63,10 @@ test("WebUSB provider dispatches FTDI devices to the FTDI driver", async () => {
   );
 });
 
-test("WebUSB provider dispatches non-FTDI devices to the CDC polyfill", async () => {
+test("WebUSB provider dispatches devices without a native driver to the CDC polyfill", async () => {
+  // An Arduino-style CDC-ACM device: neither FTDI nor Prolific.
   setNavigator({
-    usb: { requestDevice: async () => ({ vendorId: 0x067b, productId: 0x2303 }) },
+    usb: { requestDevice: async () => ({ vendorId: 0x2341, productId: 0x0043 }) },
   });
   let loaded = false;
   class FakeCdcPort {

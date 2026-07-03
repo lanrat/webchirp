@@ -44,16 +44,19 @@ Over WebUSB a single device chooser is shown and the selected adapter is
 dispatched to a chip-specific driver:
 
 - **FTDI** adapters (FT231X, FT232R, ...) use a built-in FTDI-over-WebUSB
-  driver. **This is the only chip family the WebUSB path has been verified to
-  work with** (tested end-to-end on Android Chrome with an FT231X cable and a
+  driver. **This is the chip family the WebUSB path has been verified to work
+  with end-to-end** (tested on Android Chrome with an FT231X cable and a
   Baofeng UV-5R).
+- **Prolific PL2303** adapters use a built-in PL2303-over-WebUSB driver that
+  detects the chip generation (01/HX/TA/TB and the newer HXN family:
+  GC/GB/GT/GL/GE/GS) and applies the matching init and register map.
 - **USB CDC-ACM** devices are dispatched to Google's `web-serial-polyfill`.
   This path is wired up but untested — most radio programming cables are not
-  CDC-ACM, so in practice the WebUSB fallback only works with FTDI cables.
-- Other vendor-specific UART bridges (CH340, CP2102, PL2303) are **not
-  supported** over WebUSB; they need chip-specific drivers that have not been
-  written yet (see `web/js/ftdi-webusb.js` for the pattern) and still require
-  native Web Serial on desktop.
+  CDC-ACM.
+- Other vendor-specific UART bridges (CH340, CP2102) are **not supported**
+  over WebUSB; they need chip-specific drivers that have not been written yet
+  (see `web/js/ftdi-webusb.js` and `web/js/pl2303-webusb.js` for the pattern)
+  and still require native Web Serial on desktop.
 
 `npm run dev` serves with cross-origin isolation headers (`COOP`/`COEP`) so
 Pyodide synchronous JS bridging can use `SharedArrayBuffer` without warnings.
