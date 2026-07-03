@@ -3,6 +3,9 @@
 ## 2026-07-10
 - Pinned the repo Node version back to 22.11.0 (from 25.2.1). Node 25 broke the `codex` CLI on startup (circular-dependency module warnings, then it failed to launch) whenever run in this directory. Verified the project still builds and passes checks on Node 22: `build:dist`, `test:channels` (8/8), `serialport` native addon load, and `runtime_bridge.py` compile all pass.
 
+## 2026-07-03
+- Added explicit relative favicon links to the app and About pages. Browsers only auto-discover `/favicon.ico` at the domain root, so deployments served from a sub-path (e.g. GitHub Pages project sites) showed no favicon; the explicit `./favicon.ico` reference works at any mount point.
+
 ## 2026-06-23
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.
