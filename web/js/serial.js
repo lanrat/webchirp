@@ -36,96 +36,6 @@ function concatUint8(a, b) {
   return out;
 }
 
-// Byte pattern for the TX->RX jumper loopback self-test: alternating-bit and
-// edge values so stuck lines, inverted logic, and framing errors all show up
-// as visible mismatches rather than accidental matches.
-export const LOOPBACK_TEST_HEX = "55 AA 5A A5 00 FF 0F F0 77 43";
-
-// Interpret a loopback self-test result. The test only makes sense with the
-// adapter's TX and RX pins physically jumpered; the verdict tells us which
-// half of the wire path to suspect (see WEBUSB_FTDI_STATUS.md section 5).
-export function summarizeLoopback(txHex, rxHex) {
-  const tx = bytesToHex(parseHex(txHex));
-  const rx = bytesToHex(parseHex(rxHex));
-  if (!rx) {
-    return {
-      verdict: "rx-dead",
-      message:
-        "Loopback FAILED: nothing received. The receive path is broken "
-        + "(hypothesis A) — fix the FTDI read path in ftdi-webusb.js.",
-    };
-  }
-  if (rx === tx) {
-    return {
-      verdict: "ok",
-      message: "Loopback OK: all bytes echoed back — the serial TX and RX paths both work.",
-    };
-  }
-  return {
-    verdict: "mismatch",
-    message: `Loopback MISMATCH: sent [${tx}] received [${rx}]. `
-      + "Bytes arrive but are corrupted — suspect baud/framing or status-byte handling.",
-  };
-}
-
-// Refine an rx-dead loopback verdict using raw USB read-path stats. An FTDI
-// chip completes a bulk IN transfer with its 2-byte status header roughly
-// every latency-timer tick even when idle, so on the webusb transport the
-// transfer counter is a heartbeat that separates "the USB read pipe is dead"
-// (a real read-path bug) from "the pipe is fine but no data reached the RX
-// FIFO" (bad jumper contact or a line/signal problem).
-export function interpretRxDeadStats(stats) {
-  const port = stats?.port;
-  if (stats?.transport !== "webusb" || !port) {
-    return {
-      cause: "unknown",
-      message: "No raw USB stats available for this transport; cannot refine further.",
-    };
-  }
-  if (port.lastError) {
-    return {
-      cause: "read-error",
-      message: `USB read failed: ${port.lastError} — the read path is dying, fix ftdi-webusb.js.`,
-    };
-  }
-  if (port.transfers === 0) {
-    return {
-      cause: "pipe-dead",
-      message:
-        "Zero bulk IN transfers completed — not even FTDI status heartbeats. "
-        + "The USB read pipe is dead (true hypothesis A: transferIn never completes).",
-    };
-  }
-  if (port.payloadBytes === 0 && port.transfers < 25) {
-    // An FTDI completes a status-header transfer every latency tick (4 ms),
-    // so a loopback window should show hundreds of transfers. A handful that
-    // never grows means reads stopped being ISSUED — the pull/read scheduling
-    // wedged (e.g. a stream pull that resolved without enqueuing), not an
-    // empty FIFO.
-    return {
-      cause: "pull-starved",
-      message:
-        `Only ${port.transfers} bulk IN transfer(s) completed and then reads stopped — `
-        + "the read path wedged after status-only packets (hypothesis A: fix pull scheduling in ftdi-webusb.js).",
-    };
-  }
-  if (port.payloadBytes === 0) {
-    return {
-      cause: "fifo-empty",
-      message:
-        `USB read pipe is ALIVE (${port.transfers} transfers, ${port.rawBytes} status bytes, `
-        + `${port.stalls} stalls) but zero data bytes reached the FTDI RX FIFO. `
-        + "The read path works — re-check the TX-RX jumper contact, then suspect line signals (hypothesis B).",
-    };
-  }
-  return {
-    cause: "data-lost",
-    message:
-      `USB pipe delivered ${port.payloadBytes} payload byte(s) that never reached the app — `
-      + "suspect buffering between the port stream and the bridge.",
-  };
-}
-
 function hasNativeSerial() {
   return typeof navigator !== "undefined" && "serial" in navigator;
 }
@@ -147,9 +57,6 @@ export class BrowserSerialBridge {
     // loop MUST report why it ended: a silently-dead read loop is
     // indistinguishable from "no data" and cost us a debugging session.
     this.onDebug = null;
-    this._readChunks = 0;
-    this._readBytes = 0;
-    this._readLoopState = "idle";
     // The resolved Web Serial provider (native navigator.serial or the WebUSB
     // chip-aware provider) and which transport it represents, set on connect.
     this.serial = null;
@@ -396,23 +303,7 @@ export class BrowserSerialBridge {
     }
   }
 
-  // Snapshot of read-path health: bridge-level chunk counts plus the
-  // transport's raw USB accounting when the port exposes it (FtdiSerialPort).
-  getReadDebugStats() {
-    return {
-      loopState: this._readLoopState,
-      chunks: this._readChunks,
-      bytes: this._readBytes,
-      buffered: this.readBuffer.length,
-      transport: this.transport,
-      port: this.port?.getDebugStats?.() || null,
-    };
-  }
-
   async _startReadLoop() {
-    this._readChunks = 0;
-    this._readBytes = 0;
-    this._readLoopState = "running";
     let endReason = "port closed";
     while (this.port && this.reader) {
       try {
@@ -422,8 +313,6 @@ export class BrowserSerialBridge {
           break;
         }
         if (value && value.length > 0) {
-          this._readChunks += 1;
-          this._readBytes += value.length;
           this.readBuffer = concatUint8(this.readBuffer, value);
           this._resolveReadWaiters(true);
         }
@@ -432,7 +321,6 @@ export class BrowserSerialBridge {
         break;
       }
     }
-    this._readLoopState = `ended (${endReason})`;
     // Surface loop death loudly; a disconnect is expected, an error is not.
     this._debug(`Serial read loop ended: ${endReason}`);
     this._resolveReadWaiters(false);

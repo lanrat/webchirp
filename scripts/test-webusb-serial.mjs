@@ -175,21 +175,14 @@ test("FtdiSerialPort read path clears a stalled IN endpoint and keeps stats", as
   // payload came through with the status header stripped.
   assert.deepEqual(clearHaltCalls, [{ direction: "in", endpoint: 1 }]);
   assert.deepEqual(Array.from(value), [0xab]);
-  assert.deepEqual(port.getDebugStats(), {
-    transfers: 2,
-    stalls: 1,
-    rawBytes: 3,
-    payloadBytes: 1,
-    lastError: "",
-  });
 });
 
 test("FtdiSerialPort read path survives status-only packets (the Android wedge)", async () => {
-  // Regression for the read-path deadlock found via the Android loopback
-  // test (stats: 2 transfers, 4 status bytes, then silence forever): a
-  // stream pull that resolved without enqueuing after a status-only packet
-  // was never re-invoked, wedging all reads. The pull must keep polling
-  // through idle status headers until real payload arrives.
+  // Regression for a read-path deadlock observed on Android (exactly two
+  // bulk IN transfers completed, then silence forever): a stream pull that
+  // resolved without enqueuing after a status-only packet was never
+  // re-invoked, wedging all reads. The pull must keep polling through idle
+  // status headers until real payload arrives.
   const statusOnly = () => ({
     status: "ok",
     data: new DataView(new Uint8Array([0x01, 0x60]).buffer),
@@ -200,6 +193,7 @@ test("FtdiSerialPort read path survives status-only packets (the Android wedge)"
     statusOnly(),
     { status: "ok", data: new DataView(new Uint8Array([0x01, 0x60, 0x50, 0xbb]).buffer) },
   ];
+  let transferInCalls = 0;
   const fakeDevice = {
     vendorId: 0x0403,
     productId: 0x6015,
@@ -220,6 +214,7 @@ test("FtdiSerialPort read path survives status-only packets (the Android wedge)"
     claimInterface: async () => {},
     controlTransferOut: async () => ({ status: "ok" }),
     transferIn: async () => {
+      transferInCalls += 1;
       const next = transferResults.shift();
       if (next) {
         return next;
@@ -235,7 +230,5 @@ test("FtdiSerialPort read path survives status-only packets (the Android wedge)"
   const { value } = await reader.read();
 
   assert.deepEqual(Array.from(value), [0x50, 0xbb]);
-  const stats = port.getDebugStats();
-  assert.equal(stats.transfers, 4, "must keep polling through idle packets");
-  assert.equal(stats.payloadBytes, 2);
+  assert.equal(transferInCalls, 4, "must keep polling through idle packets");
 });

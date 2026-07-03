@@ -91,16 +91,6 @@ export class FtdiSerialPort {
     this._outEndpoint = 0;
     this._inPacketSize = 64;
     this._closed = false;
-    // Raw bulk-IN accounting. The FTDI chip returns a 2-byte status header on
-    // every completed IN transfer (~every latency-timer tick) even when idle,
-    // so `transfers` acts as a heartbeat: zero means the USB read pipe itself
-    // is dead, while a beating heart with zero payload means nothing reached
-    // the chip's RX FIFO (wiring/signals, not the read path).
-    this._stats = { transfers: 0, stalls: 0, rawBytes: 0, payloadBytes: 0, lastError: "" };
-  }
-
-  getDebugStats() {
-    return { ...this._stats };
   }
 
   getInfo() {
@@ -195,7 +185,6 @@ export class FtdiSerialPort {
     const inEndpoint = this._inEndpoint;
     const outEndpoint = this._outEndpoint;
     const packetSize = this._inPacketSize;
-    const stats = this._stats;
     const isClosed = () => this._closed;
 
     this.readable = new ReadableStream({
@@ -210,11 +199,9 @@ export class FtdiSerialPort {
         try {
           while (!isClosed()) {
             const result = await device.transferIn(inEndpoint, packetSize);
-            stats.transfers += 1;
             if (result.status === "stall") {
               // A stalled IN endpoint returns "stall" forever until the halt
               // is cleared; without this the read path goes permanently silent.
-              stats.stalls += 1;
               await device.clearHalt("in", inEndpoint);
               continue;
             }
@@ -227,17 +214,14 @@ export class FtdiSerialPort {
                 result.data.byteOffset,
                 result.data.byteLength,
               );
-              stats.rawBytes += bytes.length;
               const payload = stripFtdiStatusBytes(bytes);
               if (payload.length > 0) {
-                stats.payloadBytes += payload.length;
                 controller.enqueue(payload);
                 return;
               }
             }
           }
         } catch (error) {
-          stats.lastError = String(error?.message || error);
           if (!isClosed()) {
             controller.error(error);
           }

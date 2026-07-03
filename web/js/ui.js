@@ -10,7 +10,6 @@ import {
   parsePrzemiennikiMetaJson,
   parsePrzemiennikiXml,
 } from "./datasources.js";
-import { LOOPBACK_TEST_HEX, interpretRxDeadStats, summarizeLoopback } from "./serial.js";
 
 const DEFAULT_SAMPLE_CSV = `Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment\n0,Simplex1,146.520000,,0.600000,,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,National Calling\n1,RepeaterA,146.940000,-,0.600000,TSQL,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,Local repeater\n`;
 const ISSUE_TEMPLATE_NAME = "radio_bug_report.yml";
@@ -39,7 +38,6 @@ export function createUiController() {
   const radioModelEl = document.querySelector("#radio-model");
   const serialConnectToggleEl = document.querySelector("#serial-connect-toggle");
   const webusbConnectToggleEl = document.querySelector("#serial-connect-webusb");
-  const serialLoopbackEl = document.querySelector("#serial-loopback");
   const radioDownloadEl = document.querySelector("#radio-download");
   const radioUploadEl = document.querySelector("#radio-upload");
   const channelInsertEl = document.querySelector("#channel-insert");
@@ -203,53 +201,6 @@ export function createUiController() {
     }
   }
 
-  // TX->RX jumper loopback self-test: writes a known byte pattern and reads it
-  // back through the connected adapter. With the adapter's TX and RX pins
-  // jumpered, the verdict isolates whether the receive path works at all —
-  // the diagnostic that decides hypothesis A vs B in WEBUSB_FTDI_STATUS.md.
-  async function runSerialLoopbackTest() {
-    if (!serialConnected) {
-      setStatus("Connect the serial adapter first, then run the loopback test.");
-      return;
-    }
-    if (serialLoopbackEl) {
-      serialLoopbackEl.disabled = true;
-    }
-    try {
-      setStatus("Loopback test: jumper the adapter's TX and RX pins, testing...");
-      const api = requireRuntimeApi();
-      // Drain any stale bytes so leftovers cannot fake an echo.
-      await api.serialTxRx({ txHex: "", rxBytes: 64, timeoutMs: 250 });
-      const wanted = LOOPBACK_TEST_HEX.split(/\s+/).filter(Boolean).length;
-      const result = await api.serialTxRx({
-        txHex: LOOPBACK_TEST_HEX,
-        rxBytes: wanted,
-        timeoutMs: 1500,
-      });
-      const summary = summarizeLoopback(LOOPBACK_TEST_HEX, result?.rx?.hex || "");
-      logDebug(`LOOPBACK verdict=${summary.verdict}`);
-      // Raw read-path stats separate "USB pipe dead" from "pipe alive, FIFO
-      // empty" — the latter means the jumper (or line signals), not our code.
-      const stats = serialTransportController?.getReadDebugStats?.();
-      if (stats) {
-        logDebug(`LOOPBACK stats ${JSON.stringify(stats)}`);
-      }
-      if (summary.verdict === "rx-dead" && stats) {
-        const refined = interpretRxDeadStats(stats);
-        logDebug(`LOOPBACK cause=${refined.cause}`);
-        setStatus(`${summary.message} ${refined.message}`);
-      } else {
-        setStatus(summary.message);
-      }
-    } catch (error) {
-      reportActionError("Loopback test", error);
-      logSerial(`ERROR ${errorSummary(error)}`);
-    } finally {
-      if (serialLoopbackEl) {
-        serialLoopbackEl.disabled = !serialConnected;
-      }
-    }
-  }
 
   function setSidebarControlsEnabled(enabled) {
     sidebarControlsEnabled = Boolean(enabled);
@@ -675,13 +626,6 @@ export function createUiController() {
         : "Connect over WebUSB (FTDI FT231X/FT232R and USB CDC-ACM adapters)";
     }
 
-    if (serialLoopbackEl) {
-      // Diagnostic: needs only a live connection, not a selected radio.
-      serialLoopbackEl.disabled = !serialConnected;
-      serialLoopbackEl.title = serialConnected
-        ? "Write a test pattern and read it back. Requires a jumper across the adapter's TX and RX pins."
-        : "Connect the serial adapter first";
-    }
 
     if (radioDownloadEl) {
       radioDownloadEl.disabled = !actionsAllowed;
@@ -2235,13 +2179,6 @@ export function createUiController() {
       connectSerial("webusb");
     });
 
-    serialLoopbackEl?.addEventListener("click", async () => {
-      try {
-        await runSerialLoopbackTest();
-      } catch (error) {
-        reportActionError("Loopback test", error);
-      }
-    });
 
     document.querySelector("#serial-transaction")?.addEventListener("click", async () => {
       const txHex = document.querySelector("#tx-hex")?.value || "";

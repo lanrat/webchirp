@@ -24,7 +24,6 @@ const serialCapability = serialBridge.getCapability();
 ui.setSerialController({
   capability: serialCapability,
   setPreferredTransport: (transport) => serialBridge.setPreferredTransport(transport),
-  getReadDebugStats: () => serialBridge.getReadDebugStats(),
 });
 ui.init(serialCapability.supported);
 if (serialCapability.webusb) {
