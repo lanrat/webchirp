@@ -1,6 +1,7 @@
 # Release Notes
 
 ## 2026-07-03
+- Added explicit relative favicon links to the app and About pages. Browsers only auto-discover `/favicon.ico` at the domain root, so deployments served from a sub-path (e.g. GitHub Pages project sites) showed no favicon; the explicit `./favicon.ico` reference works at any mount point.
 - Added a progress bar for radio download and upload, shown in the Serial Bridge panel under the Download/Upload buttons. CHIRP drivers already report per-block progress through their status callback; those reports now drive a live bar with the driver's own phase message and a percentage, starting indeterminate until the first block count arrives. The per-block "msg: cur/max" debug log lines are demoted to logging only phase changes, so clone operations no longer flood the debug output.
 - Removed the per-transfer TX/RX hex logging from the byte-oriented serial handlers (diagnostic residue from the read-deadlock hunt): every clone block was printed to the debug log on both native Web Serial and WebUSB, flooding it during upload/download. The low-volume hex-op logging that upstream already had is unchanged.
 - Updated the "Connect via WebUSB" hover text to be chip-agnostic and moved the supported/unsupported adapter lists into a single exported constant in `webusb-serial.js`, so the startup hint (and any future user-facing text) stays in sync automatically when chip drivers are added.
