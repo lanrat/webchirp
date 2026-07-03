@@ -8,6 +8,7 @@
 - Hardened FTDI-over-WebUSB initialization to match native drivers: `open()` now purges the RX/TX FIFOs after reset (stale bytes can no longer masquerade as protocol responses) and sets the latency timer to 4 ms (down from the 16 ms power-on default) for snappier byte-oriented reads.
 - Fixed silent failure modes in the FTDI-over-WebUSB read path: a stalled bulk IN endpoint is now recovered with `clearHalt` and retried (previously it returned "stall" forever with no data and no error), babble results raise a real error, and the serial read loop logs why it ended instead of dying silently.
 - Verified working end-to-end on Android Chrome with an FT231X cable: downloading a Baofeng UV-5R over WebUSB completes. Documented in the README that FTDI is currently the only chip family the WebUSB path is verified to work with.
+- Fixed unreadable, overlapping channel-table headers on desktop: the table no longer compresses all 17 columns to fit the window (`table-layout: fixed`), instead taking its natural width with no-wrap headers and scrolling horizontally when the window is narrower — the same approach the mobile pass already used below 900px, now applied at all viewport sizes.
 
 ## 2026-06-23
 - Radio make/model dropdowns now populate instantly from a prebuilt static catalog (`web/radio-catalog.json`) instead of booting Pyodide and importing every CHIRP driver on first load; live driver enumeration remains as a fallback.

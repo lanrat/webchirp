@@ -829,12 +829,16 @@ button:not(:disabled):hover {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* Let the table take its natural width so all 17 column headers stay
+   readable; it scrolls horizontally inside .mem-table-scroll when the
+   window is narrower (previously table-layout: fixed compressed every
+   column to fit, overlapping the header text). */
 #mem-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   background: var(--surface);
   border: 1px solid var(--border);
-  table-layout: fixed;
 }
 
 #mem-table th,
@@ -842,6 +846,7 @@ button:not(:disabled):hover {
   border: 1px solid var(--border);
   padding: 0.35rem;
   font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 #mem-table th {
@@ -863,6 +868,24 @@ button:not(:disabled):hover {
   background: transparent;
   color: var(--text);
   font-size: 0.85rem;
+}
+
+/* With natural table sizing, editors set the column width floor; keep the
+   auto-indexed Location column compact. */
+#mem-table td input,
+#mem-table td select {
+  min-width: 6rem;
+}
+
+#mem-table td:first-child,
+#mem-table th:first-child {
+  min-width: 2.75rem;
+}
+
+#mem-table td:first-child input,
+#mem-table td:first-child select,
+#mem-table .channel-location-button {
+  min-width: 2.75rem;
 }
 
 #mem-table .channel-location-button {
@@ -979,35 +1002,12 @@ button:not(:disabled):hover {
     content: "\25B8";
   }
 
-  /* Don't compress the 17 columns to fit the screen (which makes them
-     unreadable); let the table take its natural width and scroll horizontally,
-     with readable, tappable cells. */
-  #mem-table {
-    width: max-content;
-    min-width: 100%;
-  }
-
-  #mem-table th,
-  #mem-table td {
-    white-space: nowrap;
-  }
-
+  /* The natural-width, horizontally-scrolling table now applies at all
+     viewports (see the base #mem-table rules); mobile only adds taller,
+     tappable cell editors. */
   #mem-table td input,
   #mem-table td select {
-    min-width: 6rem;
     min-height: 2.25rem;
-  }
-
-  /* Keep the auto-indexed Location column compact. */
-  #mem-table td:first-child,
-  #mem-table th:first-child {
-    min-width: 2.75rem;
-  }
-
-  #mem-table td:first-child input,
-  #mem-table td:first-child select,
-  #mem-table .channel-location-button {
-    min-width: 2.75rem;
   }
 
   /* Comfortable touch targets for primary controls (table cells excluded). */
