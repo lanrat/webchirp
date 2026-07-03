@@ -1,5 +1,8 @@
 # Release Notes
 
+## 2026-07-02
+- Fixed unreadable, overlapping channel-table headers on desktop: the table no longer compresses all 17 columns to fit the window (`table-layout: fixed`), instead taking its natural width with no-wrap headers and scrolling horizontally when the window is narrower — the same approach the mobile pass already used below 900px, now applied at all viewport sizes.
+
 ## 2026-06-23
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.
