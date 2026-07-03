@@ -44,12 +44,12 @@ Over WebUSB a single device chooser is shown and the selected adapter is
 dispatched to a chip-specific driver:
 
 - **FTDI** adapters (FT231X, FT232R, ...) use a built-in FTDI-over-WebUSB
-  driver. **This is the chip family the WebUSB path has been verified to work
-  with end-to-end** (tested on Android Chrome with an FT231X cable and a
-  Baofeng UV-5R).
+  driver, verified end-to-end on Android Chrome with an FT231X cable and a
+  Baofeng UV-5R.
 - **Prolific PL2303** adapters use a built-in PL2303-over-WebUSB driver that
   detects the chip generation (01/HX/TA/TB and the newer HXN family:
-  GC/GB/GT/GL/GE/GS) and applies the matching init and register map.
+  GC/GB/GT/GL/GE/GS) and applies the matching init and register map. Also
+  verified end-to-end on Android Chrome.
 - **USB CDC-ACM** devices are dispatched to Google's `web-serial-polyfill`.
   This path is wired up but untested — most radio programming cables are not
   CDC-ACM.
