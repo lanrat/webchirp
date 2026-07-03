@@ -20,7 +20,7 @@ import {
 
 const DEFAULT_SAMPLE_CSV = `Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment\n0,Simplex1,146.520000,,0.600000,,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,National Calling\n1,RepeaterA,146.940000,-,0.600000,TSQL,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,Local repeater\n`;
 const ISSUE_TEMPLATE_NAME = "radio_bug_report.yml";
-const ISSUE_NEW_URL = "https://github.com/jasiek/webchirp/issues/new";
+const ISSUE_NEW_URL = "https://github.com/lanrat/webchirp/issues/new";
 const LAST_RADIO_COOKIE = "webchirp_last_radio";
 
 // Create and manage all DOM/UI state and user interaction behavior.

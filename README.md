@@ -2,7 +2,9 @@
 
 Prototype for running parts of [CHIRP](https://github.com/kk7ds/chirp) in the browser with a CHIRP-like UI.
 
-# This is live and running on [codeplug.org](https://codeplug.org)
+Formed from [github.com/jasiek/webchirp](https://github.com/jasiek/webchirp) with additional features and improvments.
+
+# This is live and running on [lanrat.github.io/webchirp](https://lanrat.github.io/webchirp/)
 
 ![](images/screenshot-2026-02-21.png)
 

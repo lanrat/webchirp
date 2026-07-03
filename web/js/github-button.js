@@ -1,4 +1,4 @@
-const REPO_API_URL = "https://api.github.com/repos/jasiek/webchirp";
+const REPO_API_URL = "https://api.github.com/repos/lanrat/webchirp";
 
 function formatStarCount(count) {
   return new Intl.NumberFormat("en", {
