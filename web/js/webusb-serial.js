@@ -12,6 +12,12 @@ import { PROLIFIC_VENDOR_ID, Pl2303SerialPort, isProlificDevice } from "./pl2303
 const WEB_SERIAL_POLYFILL_URL =
   "https://cdn.jsdelivr.net/npm/web-serial-polyfill@1.0.15/+esm";
 
+// Single source of truth for user-facing "what can WebUSB drive" text; update
+// alongside USB_DEVICE_FILTERS / the dispatch below when adding chip drivers.
+export const WEBUSB_SUPPORTED_ADAPTERS =
+  "FTDI (FT231X/FT232R, etc.), Prolific PL2303 (HX/TA/TB/HXN), and USB CDC-ACM devices";
+export const WEBUSB_UNSUPPORTED_ADAPTERS = "CH340/CP2102";
+
 // WebUSB only lists devices that match a filter — an empty filter list shows an
 // EMPTY chooser. So we filter to the adapters we can actually drive: FTDI and
 // Prolific by vendor id, and USB CDC by interface class (control class 0x02 /
