@@ -1,6 +1,7 @@
 # Release Notes
 
 ## 2026-07-03
+- Importing a CSV while the editor holds real channels now asks before touching them: a dialog offers Replace (previous behavior), Merge (append the imported channels below the existing ones, renumbering Locations), or Cancel. The prompt only appears when existing rows contain actual channel data, so blank inserted rows never trigger it; imports into an empty editor load directly as before.
 - Added explicit relative favicon links to the app and About pages. Browsers only auto-discover `/favicon.ico` at the domain root, so deployments served from a sub-path (e.g. GitHub Pages project sites) showed no favicon; the explicit `./favicon.ico` reference works at any mount point.
 - Added a progress bar for radio download and upload, shown in the Serial Bridge panel under the Download/Upload buttons. CHIRP drivers already report per-block progress through their status callback; those reports now drive a live bar with the driver's own phase message and a percentage, starting indeterminate until the first block count arrives. The per-block "msg: cur/max" debug log lines are demoted to logging only phase changes, so clone operations no longer flood the debug output.
 - Removed the per-transfer TX/RX hex logging from the byte-oriented serial handlers (diagnostic residue from the read-deadlock hunt): every clone block was printed to the debug log on both native Web Serial and WebUSB, flooding it during upload/download. The low-volume hex-op logging that upstream already had is unchanged.

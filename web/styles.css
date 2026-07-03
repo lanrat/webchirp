@@ -739,6 +739,12 @@ button:not(:disabled):hover {
   font-size: 1rem;
 }
 
+.import-choice-message {
+  margin: 0 0 0.9rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .modal-grid {
   display: grid;
   grid-template-columns: 160px 1fr;

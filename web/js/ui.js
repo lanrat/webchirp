@@ -78,6 +78,11 @@ export function createUiController() {
   const przemiennikiRangeEl = document.querySelector("#przemienniki-range");
   const przemiennikiGeolocateEl = document.querySelector("#przemienniki-geolocate");
   const przemiennikiCancelEl = document.querySelector("#przemienniki-cancel");
+  const importChoiceModalEl = document.querySelector("#import-choice-modal");
+  const importChoiceMessageEl = document.querySelector("#import-choice-message");
+  const importChoiceReplaceEl = document.querySelector("#import-choice-replace");
+  const importChoiceMergeEl = document.querySelector("#import-choice-merge");
+  const importChoiceCancelEl = document.querySelector("#import-choice-cancel");
   const sidebarControlEls = Array.from(
     document.querySelectorAll(".left-panel select, .left-panel button, .left-panel input"),
   );
@@ -108,6 +113,7 @@ export function createUiController() {
   let serialConnected = false;
   let serialTransportController = null;
   let serialCapability = { supported: false, native: false, webusb: false };
+  let importChoiceResolve = null;
 
   const repeaterQuerySources = {
     przemienniki: {
@@ -1255,6 +1261,47 @@ export function createUiController() {
     return Boolean(przemiennikiModalEl && !przemiennikiModalEl.classList.contains("hidden"));
   }
 
+  function isImportChoiceModalOpen() {
+    return Boolean(importChoiceModalEl && !importChoiceModalEl.classList.contains("hidden"));
+  }
+
+  function resolveImportChoice(choice) {
+    if (!importChoiceResolve) {
+      return;
+    }
+    const resolve = importChoiceResolve;
+    importChoiceResolve = null;
+    importChoiceModalEl?.classList.add("hidden");
+    resolve(choice);
+  }
+
+  // Ask the user what to do with imported channels when the editor already
+  // holds real ones. Resolves to "replace", "merge", or "cancel".
+  function askImportChoice(message) {
+    if (!importChoiceModalEl) {
+      return Promise.resolve("replace");
+    }
+    if (importChoiceMessageEl) {
+      importChoiceMessageEl.textContent = message;
+    }
+    importChoiceModalEl.classList.remove("hidden");
+    return new Promise((resolve) => {
+      importChoiceResolve = resolve;
+    });
+  }
+
+  // A row counts as a real channel when it has a usable frequency or a name;
+  // blank inserted rows should not trigger the data-loss prompt.
+  function hasRealChannels() {
+    return currentRows.some((row) => {
+      const frequency = Number.parseFloat(String(row?.Frequency ?? ""));
+      if (Number.isFinite(frequency) && frequency > 0) {
+        return true;
+      }
+      return String(row?.Name ?? "").trim() !== "";
+    });
+  }
+
   async function openRepeaterQueryModal(sourceKey) {
     setActiveRepeaterQuerySource(sourceKey);
     const source = activeRepeaterSourceConfig();
@@ -2113,13 +2160,25 @@ export function createUiController() {
   }
 
   // Parse CSV through Python runtime and refresh table rows and status text.
-  async function loadCsvText(csvText) {
+  async function parseCsvViaRuntime(csvText) {
     setStatus("Parsing CSV with CHIRP Python...");
-    const parsed = await requireRuntimeApi().parseCsv({ csvText });
+    return requireRuntimeApi().parseCsv({ csvText });
+  }
+
+  // Apply a parsed CSV to the editor: "replace" swaps the channel list out
+  // wholesale (Locations come from the file); "merge" appends the imported
+  // channels below the existing ones and renumbers Locations.
+  function applyParsedCsv(parsed, mode = "replace") {
     const headersFromMeta = radioMetadata.headers || [];
     const parsedHeaders = parsed.headers || [];
     currentHeaders = headersFromMeta.length ? headersFromMeta : parsedHeaders;
-    currentRows = parsed.rows;
+    const imported = parsed.rows || [];
+    if (mode === "merge") {
+      currentRows = currentRows.concat(imported);
+      reindexLocationColumn();
+    } else {
+      currentRows = imported;
+    }
     clearInvalidHighlights();
     resetRowSelection();
     renderTable();
@@ -2127,7 +2186,15 @@ export function createUiController() {
     const issues = parsed.errors.length
       ? ` (${parsed.errors.length} parse warnings)`
       : "";
-    setStatus(`Loaded ${currentRows.length} channel(s)${issues}.`);
+    if (mode === "merge") {
+      setStatus(`Merged ${imported.length} imported channel(s); ${currentRows.length} total${issues}.`);
+    } else {
+      setStatus(`Loaded ${currentRows.length} channel(s)${issues}.`);
+    }
+  }
+
+  async function loadCsvText(csvText) {
+    applyParsedCsv(await parseCsvViaRuntime(csvText), "replace");
   }
 
   // Trigger client-side download of generated text content as a file.
@@ -2333,6 +2400,20 @@ export function createUiController() {
         reportActionError("RepeaterBook modal", error);
       }
     });
+    importChoiceReplaceEl?.addEventListener("click", () => {
+      resolveImportChoice("replace");
+    });
+    importChoiceMergeEl?.addEventListener("click", () => {
+      resolveImportChoice("merge");
+    });
+    importChoiceCancelEl?.addEventListener("click", () => {
+      resolveImportChoice("cancel");
+    });
+    importChoiceModalEl?.addEventListener("click", (event) => {
+      if (event.target === importChoiceModalEl) {
+        resolveImportChoice("cancel");
+      }
+    });
     przemiennikiCancelEl?.addEventListener("click", () => {
       const source = activeRepeaterSourceConfig();
       setPrzemiennikiModalOpen(false);
@@ -2376,6 +2457,10 @@ export function createUiController() {
 
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
+        if (isImportChoiceModalOpen()) {
+          resolveImportChoice("cancel");
+          return;
+        }
         if (isPrzemiennikiModalOpen()) {
           setPrzemiennikiModalOpen(false);
           return;
@@ -2439,7 +2524,21 @@ export function createUiController() {
 
       try {
         const csvText = await file.text();
-        await loadCsvText(csvText);
+        const parsed = await parseCsvViaRuntime(csvText);
+        let mode = "replace";
+        if (hasRealChannels()) {
+          const choice = await askImportChoice(
+            `The editor holds ${currentRows.length} channel(s) that will be lost if replaced. `
+            + `The selected file contains ${(parsed.rows || []).length} channel(s). `
+            + "Replace the existing channels, or merge by appending the imported channels below them?",
+          );
+          if (choice === "cancel") {
+            setStatus("CSV import cancelled.");
+            return;
+          }
+          mode = choice;
+        }
+        applyParsedCsv(parsed, mode);
       } catch (error) {
         reportActionError("CSV import", error);
       } finally {
