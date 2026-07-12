@@ -1,5 +1,10 @@
 # Release Notes
 
+## 2026-07-11
+- Fixed a pre-existing crash (`Duplicate radio driver id`) when selecting a radio: concurrent metadata/settings calls could re-execute a driver module while its lazy import was suspended fetching source. All Pyodide-backed runtime calls now run one at a time through a FIFO queue.
+- The static radio catalog is only used when it was built from the exact CHIRP revision the runtime is pinned to; otherwise the app falls back to live driver enumeration. The pin is now a single shared constant and `build:catalog` fails on a submodule/pin mismatch.
+- Typing in the radio search box no longer triggers a driver load per keystroke; the load is debounced until typing settles, skipped when the selection is unchanged, and stale responses can no longer overwrite a newer selection.
+
 ## 2026-07-03
 - Refreshed the README: fixed typos and leftover absolute paths from the original author's machine, rewrote the outdated feature list to cover everything implemented since February (settings editor, presets, repeater queries, catalog/search, mobile/dark UI, copy/paste, WebUSB drivers, progress bar, import merge prompt), updated the mermaid diagram's stale callWorker naming to the current direct runtime calls, and corrected the connect/baud instructions.
 - Importing a CSV while the editor holds real channels now asks before touching them: a dialog offers Replace (previous behavior), Merge (append the imported channels below the existing ones, renumbering Locations), or Cancel. The prompt only appears when existing rows contain actual channel data, so blank inserted rows never trigger it; imports into an empty editor load directly as before.

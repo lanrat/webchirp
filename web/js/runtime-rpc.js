@@ -1,13 +1,15 @@
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.mjs";
+import { createCallQueue } from "./call-queue.mjs";
 import {
   createBrowserCdnPythonSource,
+  DEFAULT_CHIRP_REVISION,
   installFetchChirpSourceGlobal,
   listDriverModules,
   seedPyodideRuntime,
 } from "./python-sources.mjs";
 
 const PYODIDE_INDEX_URL = "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/";
-const CHIRP_REVISION = "1467519e792e8ebcc9a33dc40df0b2e273ce9a53";
+const CHIRP_REVISION = DEFAULT_CHIRP_REVISION;
 
 const pythonSource = createBrowserCdnPythonSource({
   chirpRevision: CHIRP_REVISION,
@@ -19,6 +21,10 @@ let bootstrapPromise;
 let radioCatalogCache = null;
 let handleSerialRpc = null;
 let bootstrapFailed = false;
+let debugLog = null;
+
+// All Pyodide-backed methods must run one at a time; see call-queue.mjs.
+const enqueueRuntimeCall = createCallQueue();
 
 // Dispatch serial operations to the app's browser-serial bridge handler.
 async function serialRpc(op, payload = {}) {
@@ -82,7 +88,8 @@ function sortRadioCatalog(radios) {
 }
 
 // Prefer a prebuilt static catalog so dropdowns can populate without booting
-// Pyodide or importing every driver. Returns null if it is missing/unusable so
+// Pyodide or importing every driver. Returns null if it is missing/unusable
+// or was generated from a different CHIRP revision than this runtime, so
 // callers fall back to live enumeration.
 async function loadRadioCatalogFromStatic() {
   try {
@@ -92,7 +99,16 @@ async function loadRadioCatalogFromStatic() {
       return null;
     }
     const data = await res.json();
-    const radios = Array.isArray(data) ? data : data?.radios;
+    if (data?.chirpRevision !== CHIRP_REVISION) {
+      if (debugLog) {
+        debugLog(
+          `CATALOG SKIP static catalog is for chirp ${data?.chirpRevision || "unknown"}, `
+          + `runtime is pinned to ${CHIRP_REVISION}; falling back to live enumeration`,
+        );
+      }
+      return null;
+    }
+    const radios = data?.radios;
     if (!Array.isArray(radios) || radios.length === 0) {
       return null;
     }
@@ -309,17 +325,25 @@ const RUNTIME_METHODS = Object.freeze({
   validateRadioSettings: handleValidateRadioSettings,
 });
 
+// getRuntimeInfo never enters Pyodide, and error reporting relies on it even
+// while a queued call is stuck; every other method must wait its turn.
+const UNQUEUED_METHODS = new Set(["getRuntimeInfo"]);
+
 export function createRuntimeRpcClient({
   handleSerialRpc: nextHandleSerialRpc,
   logDebug,
   onRuntimeCrash,
 }) {
   handleSerialRpc = nextHandleSerialRpc;
+  debugLog = logDebug || null;
 
-  function wrapRuntimeMethod(handler) {
+  function wrapRuntimeMethod(name, handler) {
     return async function invokeRuntimeMethod(payload = {}) {
       try {
-        return await handler(payload);
+        if (UNQUEUED_METHODS.has(name)) {
+          return await handler(payload);
+        }
+        return await enqueueRuntimeCall(() => handler(payload));
       } catch (error) {
         const detailedError =
           (typeof error?.stack === "string" && error.stack) ||
@@ -340,7 +364,7 @@ export function createRuntimeRpcClient({
 
   const runtimeApi = {};
   for (const [name, handler] of Object.entries(RUNTIME_METHODS)) {
-    runtimeApi[name] = wrapRuntimeMethod(handler);
+    runtimeApi[name] = wrapRuntimeMethod(name, handler);
   }
 
   return Object.freeze(runtimeApi);
