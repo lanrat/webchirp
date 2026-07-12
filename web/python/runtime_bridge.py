@@ -505,34 +505,39 @@ def _best_effort_radio_instance(module_name: str, class_name: str, require_cache
     else:
         radio = _fallback_constructor()
 
-    radio.status_fn = _status_to_log
+    radio.status_fn = _make_status_logger()
     return radio
 
 
-_last_status_msg = None
-
-
-def _status_to_log(status):
-    """Forward CHIRP status callbacks to the UI progress display.
+def _make_status_logger():
+    """Build a status callback that forwards CHIRP reports to the UI progress display.
 
     Drivers report one status per transferred block; forwarding each report to
     the progress bar keeps it live, while the debug log only records message
-    changes (phase transitions) instead of one line per block.
+    changes (phase transitions) instead of one line per block. The dedup state
+    lives in this closure so it is scoped to one radio instance/operation: a
+    driver that repeats the same message through a whole transfer must not
+    suppress that message from the next transfer's log.
     """
-    global _last_status_msg
-    msg = str(getattr(status, "msg", "") or "")
-    cur = getattr(status, "cur", None)
-    maxv = getattr(status, "max", None)
-    try:
-        if cur is None or maxv is None:
-            serial_progress(-1, -1, msg)
-        else:
-            serial_progress(int(cur), int(maxv), msg)
-    except Exception:
-        pass  # A progress display failure must never break a clone.
-    if msg and msg != _last_status_msg:
-        _last_status_msg = msg
-        serial_log(msg)
+    last_msg = None
+
+    def _status_to_log(status):
+        nonlocal last_msg
+        msg = str(getattr(status, "msg", "") or "")
+        cur = getattr(status, "cur", None)
+        maxv = getattr(status, "max", None)
+        try:
+            if cur is None or maxv is None:
+                serial_progress(-1, -1, msg)
+            else:
+                serial_progress(int(cur), int(maxv), msg)
+        except Exception:
+            pass  # A progress display failure must never break a clone.
+        if msg and msg != last_msg:
+            last_msg = msg
+            serial_log(msg)
+
+    return _status_to_log
 
 
 def _iter_memory_numbers(radio):
@@ -621,7 +626,7 @@ def _create_radio_for_serial(radio_cls):
     pipe.setDTR(getattr(radio_cls, "WANTS_DTR", True))
     pipe.setRTS(getattr(radio_cls, "WANTS_RTS", True))
     radio = radio_cls(pipe)
-    radio.status_fn = _status_to_log
+    radio.status_fn = _make_status_logger()
     return radio
 
 
@@ -849,7 +854,7 @@ def _upload_selected_radio_sync(module_name: str, class_name: str, rows, setting
             "No cached radio image for this model. Download from radio first, then upload."
         )
     radio = radio_cls(memmap.MemoryMapBytes(base_image))
-    radio.status_fn = _status_to_log
+    radio.status_fn = _make_status_logger()
     pipe = WebSerialPipe(timeout=_serial_pipe_timeout_seconds())
     pipe.baudrate = getattr(radio_cls, "BAUD_RATE", None)
     pipe.setDTR(getattr(radio_cls, "WANTS_DTR", True))
@@ -903,7 +908,7 @@ def upload_image_base64(module_name: str, class_name: str, image_b64: str):
         raise RuntimeUnsupportedError("Invalid image base64 payload") from exc
 
     radio = radio_cls(memmap.MemoryMapBytes(raw_image))
-    radio.status_fn = _status_to_log
+    radio.status_fn = _make_status_logger()
     pipe = WebSerialPipe(timeout=_serial_pipe_timeout_seconds())
     pipe.baudrate = getattr(radio_cls, "BAUD_RATE", None)
     pipe.setDTR(getattr(radio_cls, "WANTS_DTR", True))
