@@ -40,6 +40,9 @@ This repository hosts a browser-based CHIRP interface (`web/`) that executes CHI
 - Include the user's input/request text in every commit message for agent-authored changes.
 - Before committing, edit RELEASE_NOTES.md, prepend an entry with the current date, or if the date is the same as today - append to the entry.
 
+# PR Behaviour
+- When submitting a PR, in the PR description include any new dependencies which were added.
+
 ## Validation
 Before committing, run relevant checks:
 - `node --check web/app.js`
