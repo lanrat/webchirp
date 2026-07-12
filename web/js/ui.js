@@ -296,6 +296,13 @@ export function createUiController() {
       if (cloneProgressPercentEl) {
         cloneProgressPercentEl.textContent = `${percent}%`;
       }
+    } else {
+      // A no-count report must not leave the previous phase's percentage on
+      // screen: removing value makes the <progress> bar indeterminate again.
+      cloneProgressBarEl?.removeAttribute?.("value");
+      if (cloneProgressPercentEl) {
+        cloneProgressPercentEl.textContent = "";
+      }
     }
   }
 
