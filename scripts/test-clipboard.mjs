@@ -105,6 +105,47 @@ test("unknown columns are passed to setRowValue and can be ignored by the caller
   assert.ok(!("Bogus" in built.rows[0]));
 });
 
+test("header subsets that omit Location map by name without column shift", () => {
+  const text = "Name\tFrequency\nSimplex1\t146.520000\nRepeaterA\t446.000000\n";
+  const built = buildRowsFromClipboardText(text, buildHelpers);
+  assert.equal(built.usedHeader, true);
+  // The header row itself must not be imported as a channel.
+  assert.equal(built.rows.length, 2);
+  assert.equal(built.rows[0].Name, "Simplex1");
+  assert.equal(built.rows[0].Frequency, "146.520000");
+  assert.equal(built.rows[1].Name, "RepeaterA");
+  assert.equal(built.rows[1].Frequency, "446.000000");
+});
+
+test("header subsets without Location or Frequency still map by name", () => {
+  const text = "Name\tTone\tPower\tComment\nSimplex1\tTSQL\t5.0W\tcalling\n";
+  const built = buildRowsFromClipboardText(text, buildHelpers);
+  assert.equal(built.usedHeader, true);
+  assert.equal(built.rows.length, 1);
+  assert.equal(built.rows[0].Name, "Simplex1");
+  assert.equal(built.rows[0].Tone, "TSQL");
+  assert.equal(built.rows[0].Power, "5.0W");
+  assert.equal(built.rows[0].Comment, "calling");
+});
+
+test("a data row with a single cell matching a column name stays positional", () => {
+  // First record is data whose Name cell is literally "Tone"; one known name
+  // is not enough to call it a header.
+  const text = "7\tTone\t146.520000\n8\tSimplex2\t446.000000\n";
+  const built = buildRowsFromClipboardText(text, buildHelpers);
+  assert.equal(built.usedHeader, false);
+  assert.equal(built.rows.length, 2);
+  assert.equal(built.rows[0].Name, "Tone");
+  assert.equal(built.rows[0].Frequency, "146.520000");
+});
+
+test("a first record dominated by unknown fields stays positional", () => {
+  const text = "Simplex1\tName\t146.520000\tsomething\n";
+  const built = buildRowsFromClipboardText(text, buildHelpers);
+  assert.equal(built.usedHeader, false);
+  assert.equal(built.rows.length, 1);
+});
+
 test("headerless TSV maps positionally in CSV_FORMAT order", () => {
   const fields = ["7", "PasteMe", "446.000000", "", "0.000000", "", "88.5"];
   const built = buildRowsFromClipboardText(`${fields.join("\t")}\n`, buildHelpers);
