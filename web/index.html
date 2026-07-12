@@ -17,8 +17,12 @@
       requests from https://codeplug.org, so forks hosted elsewhere should
       point this at their own proxy, or set content="" to hide the query
       features. Removing this tag falls back to the built-in default.
+
+      This fork (lanrat.github.io) has no proxy of its own and cannot use the
+      codeplug.org one (CORS-restricted to that origin), so the online repeater
+      queries are disabled here via a blank content.
     -->
-    <meta name="webchirp-repeater-api-base" content="https://api.codeplug.org" />
+    <meta name="webchirp-repeater-api-base" content="" />
     <title>WebCHIRP | Browser-based CHIRP radio programming</title>
     <meta
       name="description"
