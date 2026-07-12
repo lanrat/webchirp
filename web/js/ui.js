@@ -1522,27 +1522,40 @@ export function createUiController() {
     return true;
   }
 
-  function removeSelectedChannelRows() {
-    const selectedIndexes = sortedSelectedRowIndexes();
-    if (selectedIndexes.length === 0) {
-      setStatus("Select one or more channels to remove.");
-      return;
-    }
-
-    for (let i = selectedIndexes.length - 1; i >= 0; i -= 1) {
-      currentRows.splice(selectedIndexes[i], 1);
+  // Remove exactly these row objects. Identity-based so a removal captured
+  // before an await (Cut's clipboard write) deletes the rows that were
+  // serialized even if the selection or row order changed while it was
+  // pending. Returns how many rows were actually removed.
+  function removeChannelRows(rowsToRemove) {
+    const identity = new Set(rowsToRemove);
+    const firstIndex = currentRows.findIndex((row) => identity.has(row));
+    const before = currentRows.length;
+    currentRows = currentRows.filter((row) => !identity.has(row));
+    const removed = before - currentRows.length;
+    if (removed === 0) {
+      return 0;
     }
     reindexLocationColumn();
     clearInvalidHighlights();
 
     resetRowSelection();
     if (currentRows.length > 0) {
-      const nextIndex = Math.min(selectedIndexes[0], currentRows.length - 1);
+      const nextIndex = Math.min(firstIndex, currentRows.length - 1);
       selectedRowIndexes = new Set([nextIndex]);
       selectionAnchorIndex = nextIndex;
     }
     renderTable();
-    setStatus(`Removed ${selectedIndexes.length} selected channel(s).`);
+    return removed;
+  }
+
+  function removeSelectedChannelRows() {
+    const selectedIndexes = sortedSelectedRowIndexes();
+    if (selectedIndexes.length === 0) {
+      setStatus("Select one or more channels to remove.");
+      return;
+    }
+    const removed = removeChannelRows(selectedIndexes.map((idx) => currentRows[idx]));
+    setStatus(`Removed ${removed} selected channel(s).`);
   }
 
   function hasDomTextSelection() {
@@ -1581,9 +1594,11 @@ export function createUiController() {
       setStatus(`Select one or more channels to ${actionLabel}.`);
       return null;
     }
+    const rows = selectedIndexes.map((idx) => currentRows[idx]);
     return {
-      tsv: serializeRowsToTsv(selectedIndexes.map((idx) => currentRows[idx])),
-      count: selectedIndexes.length,
+      tsv: serializeRowsToTsv(rows),
+      count: rows.length,
+      rows,
     };
   }
 
@@ -1604,8 +1619,8 @@ export function createUiController() {
     }
     event.clipboardData.setData("text/plain", payload.tsv);
     event.preventDefault();
-    removeSelectedChannelRows();
-    setStatus(`Cut ${payload.count} channel(s) to clipboard.`);
+    const removed = removeChannelRows(payload.rows);
+    setStatus(`Cut ${removed} channel(s) to clipboard.`);
   }
 
   async function writeChannelTsvToClipboard(actionLabel, remove) {
@@ -1625,8 +1640,10 @@ export function createUiController() {
       return;
     }
     if (remove) {
-      removeSelectedChannelRows();
-      setStatus(`Cut ${payload.count} channel(s) to clipboard.`);
+      // The write may have been parked behind a permission prompt; delete the
+      // rows that were serialized, not whatever is selected now.
+      const removed = removeChannelRows(payload.rows);
+      setStatus(`Cut ${removed} channel(s) to clipboard.`);
     } else {
       setStatus(`Copied ${payload.count} channel(s) to clipboard.`);
     }

@@ -134,8 +134,18 @@ export function buildRowsFromClipboardText(text, { createBlankRow, setRowValue }
   const candidateHeaders = records[0].map(
     (field) => HEADER_BY_LOWERCASE.get(field.trim().toLowerCase()) ?? field.trim(),
   );
+  // The first record is a header when known column names dominate it — any
+  // subset qualifies (e.g. "Name\tFrequency" from a spreadsheet), no single
+  // column is required, and extra unknown columns are tolerated as long as
+  // they don't outnumber the recognized ones. Requiring at least two matches
+  // keeps a data row whose one cell happens to equal a column name (a channel
+  // named "Tone") positional.
+  const nonEmptyFields = records[0].filter((field) => field.trim() !== "");
+  const knownFields = nonEmptyFields.filter((field) =>
+    HEADER_BY_LOWERCASE.has(field.trim().toLowerCase()),
+  );
   const usedHeader =
-    candidateHeaders.includes("Location") && candidateHeaders.includes("Frequency");
+    knownFields.length >= 2 && knownFields.length * 2 >= nonEmptyFields.length;
   const headers = usedHeader ? candidateHeaders : CSV_FORMAT_HEADERS;
   const dataRecords = usedHeader ? records.slice(1) : records;
   const rows = dataRecords.map((record) => {
