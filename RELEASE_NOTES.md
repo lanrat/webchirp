@@ -1,5 +1,10 @@
 # Release Notes
 
+## 2026-07-11
+- Fixed a pre-existing crash (`Duplicate radio driver id`) when selecting a radio: concurrent metadata/settings calls could re-execute a driver module while its lazy import was suspended fetching source. All Pyodide-backed runtime calls now run one at a time through a FIFO queue.
+- The static radio catalog is only used when it was built from the exact CHIRP revision the runtime is pinned to; otherwise the app falls back to live driver enumeration. The pin is now a single shared constant and `build:catalog` fails on a submodule/pin mismatch.
+- Typing in the radio search box no longer triggers a driver load per keystroke; the load is debounced until typing settles, skipped when the selection is unchanged, and stale responses can no longer overwrite a newer selection.
+
 ## 2026-07-10
 - Pinned the repo Node version back to 22.11.0 (from 25.2.1). Node 25 broke the `codex` CLI on startup (circular-dependency module warnings, then it failed to launch) whenever run in this directory. Verified the project still builds and passes checks on Node 22: `build:dist`, `test:channels` (8/8), `serialport` native addon load, and `runtime_bridge.py` compile all pass.
 

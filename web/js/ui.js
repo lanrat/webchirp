@@ -15,6 +15,7 @@ const DEFAULT_SAMPLE_CSV = `Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq
 const ISSUE_TEMPLATE_NAME = "radio_bug_report.yml";
 const ISSUE_NEW_URL = "https://github.com/jasiek/webchirp/issues/new";
 const LAST_RADIO_COOKIE = "webchirp_last_radio";
+const SEARCH_RELOAD_DEBOUNCE_MS = 350;
 
 // Create and manage all DOM/UI state and user interaction behavior.
 export function createUiController() {
@@ -73,6 +74,12 @@ export function createUiController() {
   let selectedRadio = null;
   let radioMetadata = { headers: [], columns: {} };
   let radioSettingsState = { supported: false, available: false, requiresImage: false, message: "", groups: [] };
+  // Only the newest metadata/settings load may apply its results; older
+  // in-flight responses would otherwise overwrite state for a radio the user
+  // has already navigated away from.
+  let radioLoadSequence = 0;
+  let lastLoadedRadioKey = "";
+  let searchReloadTimer = null;
   let runtimeInfo = { chirpRevision: "" };
   let lastUsbVendorId = "";
   let lastUsbProductId = "";
@@ -676,9 +683,36 @@ export function createUiController() {
     persistSelectedRadioCookie();
     clearInvalidHighlights();
     clearInvalidSettings();
-    Promise.all([loadSelectedRadioMetadata(), loadSelectedRadioSettings()])
-      .then(() => renderTable())
-      .catch((error) => reportActionError("Metadata load", error));
+    if (selectedRadio && selectedRadio.key === lastLoadedRadioKey) {
+      renderTable();
+      return;
+    }
+    const loadToken = nextRadioLoadToken();
+    Promise.all([
+      loadSelectedRadioMetadata(loadToken),
+      loadSelectedRadioSettings({ loadToken }),
+    ])
+      .then(() => {
+        if (isStaleRadioLoad(loadToken)) {
+          return;
+        }
+        lastLoadedRadioKey = selectedRadio?.key || "";
+        renderTable();
+      })
+      .catch((error) => {
+        if (!isStaleRadioLoad(loadToken)) {
+          reportActionError("Metadata load", error);
+        }
+      });
+  }
+
+  function nextRadioLoadToken() {
+    radioLoadSequence += 1;
+    return radioLoadSequence;
+  }
+
+  function isStaleRadioLoad(loadToken) {
+    return loadToken !== radioLoadSequence;
   }
 
   function formatRadioModelOption(radio, hasDuplicateModel) {
@@ -1410,7 +1444,7 @@ export function createUiController() {
   }
 
   // Load selected radio's CHIRP-derived column metadata from Python runtime.
-  async function loadSelectedRadioMetadata() {
+  async function loadSelectedRadioMetadata(loadToken = nextRadioLoadToken()) {
     if (!selectedRadio) {
       return;
     }
@@ -1418,11 +1452,15 @@ export function createUiController() {
       module: selectedRadio.module,
       className: selectedRadio.className,
     });
+    if (isStaleRadioLoad(loadToken)) {
+      return;
+    }
     radioMetadata = meta || { headers: [], columns: {} };
     currentHeaders = radioMetadata.headers?.length ? radioMetadata.headers : currentHeaders;
   }
 
   async function loadSelectedRadioSettings(options = {}) {
+    const loadToken = options.loadToken ?? nextRadioLoadToken();
     if (!selectedRadio) {
       radioSettingsState = {
         supported: false,
@@ -1459,6 +1497,10 @@ export function createUiController() {
     } catch (error) {
       logDebug(`SETTINGS LOAD FALLBACK ${errorSummary(error)}`);
       nextState.message = "Radio-wide settings could not be prepared.";
+    }
+
+    if (isStaleRadioLoad(loadToken)) {
+      return;
     }
 
     if (preserveCurrent && radioHasSettings() && nextState.supported) {
@@ -2090,10 +2132,21 @@ export function createUiController() {
       }
     });
 
+    // Filtering only narrows the dropdowns; defer the (Pyodide-backed)
+    // metadata/settings load until typing settles, and skip it entirely when
+    // the effective selection did not change.
     radioSearchEl?.addEventListener("input", () => {
       radioFilterText = String(radioSearchEl.value || "").trim();
+      const previousKey = selectedRadio?.key || "";
       refreshMakeOptions();
-      reloadForSelectedRadio();
+      if ((selectedRadio?.key || "") === previousKey) {
+        return;
+      }
+      clearTimeout(searchReloadTimer);
+      searchReloadTimer = setTimeout(() => {
+        searchReloadTimer = null;
+        reloadForSelectedRadio();
+      }, SEARCH_RELOAD_DEBOUNCE_MS);
     });
 
     radioMakeEl.addEventListener("change", () => {
