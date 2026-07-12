@@ -418,3 +418,104 @@ test("search box filters make and model dropdowns across vendors", async () => {
   radioSearchEl.dispatchEvent({ type: "input" });
   assert.deepEqual(radioMakeEl.children.map((o) => o.textContent), ["Acme", "Baofeng"]);
 });
+
+function tableHeaderTexts(document) {
+  const headerRow = document.querySelector("#mem-table thead").children[0];
+  return (headerRow?.children || []).map((th) => th.textContent);
+}
+
+function flushMicrotasks() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+const STALE_TEST_CATALOG = [
+  { vendor: "Acme", model: "Alpha", module: "alpha", className: "AlphaRadio", key: "alpha:AlphaRadio", isLiveRadio: false },
+  { vendor: "SlowCo", model: "Slow", module: "slow", className: "SlowRadio", key: "slow:SlowRadio", isLiveRadio: false },
+  { vendor: "FastCo", model: "Fast", module: "fast", className: "FastRadio", key: "fast:FastRadio", isLiveRadio: false },
+];
+
+const EMPTY_SETTINGS = { supported: false, available: false, requiresImage: false, message: "", groups: [] };
+
+test("stale metadata response does not overwrite a newer radio selection", async () => {
+  const { radioMakeEl } = installFakeDom();
+  const { createUiController } = await import("../web/js/ui.js");
+  const ui = createUiController();
+  const slowMetadata = createDeferred();
+
+  ui.setRuntimeApi({
+    listRadios: async () => ({ radios: STALE_TEST_CATALOG }),
+    getRuntimeInfo: async () => ({ chirpRevision: "test-revision" }),
+    getRadioMetadata: async ({ module }) => {
+      if (module === "slow") {
+        return slowMetadata.promise;
+      }
+      const header = module === "fast" ? "FastHeader" : "AlphaHeader";
+      return { headers: ["Location", header], columns: {} };
+    },
+    getRadioSettings: async () => EMPTY_SETTINGS,
+    parseCsv: async () => ({ headers: ["Location", "Name"], rows: [], errors: [] }),
+  });
+
+  await ui.init(true);
+
+  // Select the slow radio; its metadata response stays in flight.
+  radioMakeEl.value = "SlowCo";
+  radioMakeEl.dispatchEvent({ type: "change" });
+
+  // Move on to the fast radio, whose metadata resolves immediately.
+  radioMakeEl.value = "FastCo";
+  radioMakeEl.dispatchEvent({ type: "change" });
+  await flushMicrotasks();
+  assert.ok(tableHeaderTexts(globalThis.document).includes("FastHeader"));
+
+  // The slow radio's response arrives last; it must be discarded.
+  slowMetadata.resolve({ headers: ["Location", "SlowHeader"], columns: {} });
+  await flushMicrotasks();
+
+  const headers = tableHeaderTexts(globalThis.document);
+  assert.ok(headers.includes("FastHeader"));
+  assert.ok(!headers.includes("SlowHeader"));
+});
+
+test("search keystrokes defer radio loads until typing settles", async (t) => {
+  const { radioSearchEl } = installFakeDom();
+  const { createUiController } = await import("../web/js/ui.js");
+  const ui = createUiController();
+  const metadataCalls = [];
+
+  ui.setRuntimeApi({
+    listRadios: async () => ({ radios: STALE_TEST_CATALOG }),
+    getRuntimeInfo: async () => ({ chirpRevision: "test-revision" }),
+    getRadioMetadata: async ({ module }) => {
+      metadataCalls.push(module);
+      return { headers: ["Location", "Name"], columns: {} };
+    },
+    getRadioSettings: async () => EMPTY_SETTINGS,
+    parseCsv: async () => ({ headers: ["Location", "Name"], rows: [], errors: [] }),
+  });
+
+  await ui.init(true);
+  const callsAfterInit = metadataCalls.length;
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  // Each keystroke changes the auto-selected radio but must not load yet.
+  radioSearchEl.value = "slow";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  radioSearchEl.value = "fast";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.equal(metadataCalls.length, callsAfterInit);
+
+  // Once typing settles, exactly one load runs, for the final selection.
+  t.mock.timers.tick(400);
+  await flushMicrotasks();
+  assert.equal(metadataCalls.length, callsAfterInit + 1);
+  assert.equal(metadataCalls.at(-1), "fast");
+
+  // Filtering that does not change the selection never schedules a load.
+  radioSearchEl.value = "fastc";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  t.mock.timers.tick(400);
+  await flushMicrotasks();
+  assert.equal(metadataCalls.length, callsAfterInit + 1);
+});

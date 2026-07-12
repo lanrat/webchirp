@@ -1,5 +1,10 @@
 # Release Notes
 
+## 2026-07-11
+- Fixed a pre-existing crash (`Duplicate radio driver id`) when selecting a radio: concurrent metadata/settings calls could re-execute a driver module while its lazy import was suspended fetching source. All Pyodide-backed runtime calls now run one at a time through a FIFO queue.
+- The static radio catalog is only used when it was built from the exact CHIRP revision the runtime is pinned to; otherwise the app falls back to live driver enumeration. The pin is now a single shared constant and `build:catalog` fails on a submodule/pin mismatch.
+- Typing in the radio search box no longer triggers a driver load per keystroke; the load is debounced until typing settles, skipped when the selection is unchanged, and stale responses can no longer overwrite a newer selection.
+
 ## 2026-06-23
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.
