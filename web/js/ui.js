@@ -75,6 +75,8 @@ export function createUiController() {
   let runtimeInfo = { chirpRevision: "" };
   let lastUsbVendorId = "";
   let lastUsbProductId = "";
+  let serialTransportController = null;
+  let serialCapability = { supported: false, native: false, webusb: false };
   let lastErrorSummary = "";
   let currentEditorView = "channels";
   let activeSettingsTab = "";
@@ -88,8 +90,6 @@ export function createUiController() {
   let activeRepeaterQuerySource = "przemienniki";
   let sidebarControlsEnabled = false;
   let serialConnected = false;
-  let serialTransportController = null;
-  let serialCapability = { supported: false, native: false, webusb: false };
 
   const repeaterQuerySources = {
     przemienniki: {
