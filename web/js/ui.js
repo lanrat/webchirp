@@ -41,6 +41,10 @@ export function createUiController() {
   const serialConnectToggleEl = document.querySelector("#serial-connect-toggle");
   const radioDownloadEl = document.querySelector("#radio-download");
   const radioUploadEl = document.querySelector("#radio-upload");
+  const cloneProgressEl = document.querySelector("#clone-progress");
+  const cloneProgressBarEl = document.querySelector("#clone-progress-bar");
+  const cloneProgressLabelEl = document.querySelector("#clone-progress-label");
+  const cloneProgressPercentEl = document.querySelector("#clone-progress-percent");
   const channelInsertEl = document.querySelector("#channel-insert");
   const channelRemoveEl = document.querySelector("#channel-remove");
   const channelMenuToggleEl = document.querySelector("#channel-menu-toggle");
@@ -162,6 +166,56 @@ export function createUiController() {
       return;
     }
     serialConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect";
+  }
+
+  // Show the clone progress bar in its indeterminate state until the driver's
+  // first status report arrives with real block counts.
+  function beginCloneProgress(label) {
+    if (!cloneProgressEl) {
+      return;
+    }
+    if (cloneProgressLabelEl) {
+      cloneProgressLabelEl.textContent = String(label || "Working...");
+    }
+    if (cloneProgressPercentEl) {
+      cloneProgressPercentEl.textContent = "";
+    }
+    cloneProgressBarEl?.removeAttribute?.("value");
+    cloneProgressEl.hidden = false;
+  }
+
+  // CHIRP drivers report status once per transferred block (cur/max may be -1
+  // when a driver reports no counts; the bar then stays indeterminate).
+  function updateCloneProgress(cur, max, msg) {
+    if (!cloneProgressEl) {
+      return;
+    }
+    cloneProgressEl.hidden = false;
+    if (msg && cloneProgressLabelEl) {
+      cloneProgressLabelEl.textContent = msg;
+    }
+    if (Number.isFinite(cur) && Number.isFinite(max) && max > 0 && cur >= 0) {
+      const percent = Math.max(0, Math.min(100, Math.round((cur / max) * 100)));
+      if (cloneProgressBarEl) {
+        cloneProgressBarEl.value = percent;
+      }
+      if (cloneProgressPercentEl) {
+        cloneProgressPercentEl.textContent = `${percent}%`;
+      }
+    } else {
+      // A no-count report must not leave the previous phase's percentage on
+      // screen: removing value makes the <progress> bar indeterminate again.
+      cloneProgressBarEl?.removeAttribute?.("value");
+      if (cloneProgressPercentEl) {
+        cloneProgressPercentEl.textContent = "";
+      }
+    }
+  }
+
+  function endCloneProgress() {
+    if (cloneProgressEl) {
+      cloneProgressEl.hidden = true;
+    }
   }
 
   function setCookie(name, value, maxAgeSeconds = 31536000) {
@@ -2259,6 +2313,7 @@ export function createUiController() {
       try {
         trackRadioEvent("radio_download", selectedRadio);
         setStatus(`Downloading from ${makeModelLabel(selectedRadio)}...`);
+        beginCloneProgress(`Downloading from ${makeModelLabel(selectedRadio)}...`);
         const result = await requireRuntimeApi().downloadSelectedRadio({
           module: selectedRadio.module,
           className: selectedRadio.className,
@@ -2288,6 +2343,8 @@ export function createUiController() {
       } catch (error) {
         reportActionError("Download", error);
         logSerial(`ERROR ${errorSummary(error)}`);
+      } finally {
+        endCloneProgress();
       }
     });
 
@@ -2310,6 +2367,7 @@ export function createUiController() {
           return;
         }
         setStatus(`Uploading to ${makeModelLabel(selectedRadio)}...`);
+        beginCloneProgress(`Uploading to ${makeModelLabel(selectedRadio)}...`);
         const uploadResult = await requireRuntimeApi().uploadSelectedRadio({
           module: selectedRadio.module,
           className: selectedRadio.className,
@@ -2323,6 +2381,8 @@ export function createUiController() {
       } catch (error) {
         reportActionError("Upload", error);
         logSerial(`ERROR ${errorSummary(error)}`);
+      } finally {
+        endCloneProgress();
       }
     });
   }
@@ -2363,6 +2423,7 @@ export function createUiController() {
     setStatus,
     logSerial,
     logDebug,
+    updateCloneProgress,
     init,
     selectedRowsForOperations,
     onRuntimeCrash(message) {
