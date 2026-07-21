@@ -3,11 +3,6 @@
 ## 2026-07-03
 - Added explicit relative favicon links to the app and About pages. Browsers only auto-discover `/favicon.ico` at the domain root, so deployments served from a sub-path (e.g. GitHub Pages project sites) showed no favicon; the explicit `./favicon.ico` reference works at any mount point.
 
-## 2026-07-02
-- Added a DOM-free channel clipboard module (`web/js/clipboard.js`) with unit tests: spreadsheet-compatible TSV serialize/parse using the canonical CHIRP CSV header, header-or-positional row mapping for pasted text, and a pure move-by-one row reorder algorithm.
-- Added channel copy/cut/paste, like desktop CHIRP: Ctrl/Cmd+C/X/V on selected rows plus Copy/Cut/Paste items in the channel actions menu. Copied channels are tab-separated text with the CHIRP CSV header, so they paste directly into Google Sheets/Excel, other webchirp tabs, and desktop CHIRP — and back. Paste overwrites downward from the first selected row (with a confirmation listing affected channels), extends the list past the end, and appends when nothing is selected; shortcuts stay out of the way while editing a cell or when text is selected.
-- Added channel reordering: Move Up/Move Down toolbar buttons and Alt+ArrowUp/Alt+ArrowDown move the selected rows by one position (preserving relative order, clamping at the edges), with Location renumbering automatically.
-
 ## 2026-06-23
 - Mobile-friendly UI pass (CSS only): the page now flows and scrolls vertically on phones (using `100dvh`) instead of being locked to the viewport, the toolbar wraps, primary controls have larger touch targets, the channel table is a bounded internal scroll area, the actions popup stays on-screen, and a new 560px breakpoint single-columns the serial actions and full-widths the view toggle. Desktop layout is unchanged.
 - Mobile channel table: instead of compressing all 17 columns to fit the screen (unreadable, overlapping headers), the table now keeps its natural width with no-wrap headers and readable, tappable cells, and scrolls horizontally. The Location column stays compact.
