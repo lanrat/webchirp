@@ -1,7 +1,6 @@
 # Release Notes
 
 ## 2026-07-03
-- Importing a CSV while the editor holds real channels now asks before touching them: a dialog offers Replace (previous behavior), Merge (append the imported channels below the existing ones, renumbering Locations), or Cancel. The prompt only appears when existing rows contain actual channel data, so blank inserted rows never trigger it; imports into an empty editor load directly as before.
 - Added explicit relative favicon links to the app and About pages. Browsers only auto-discover `/favicon.ico` at the domain root, so deployments served from a sub-path (e.g. GitHub Pages project sites) showed no favicon; the explicit `./favicon.ico` reference works at any mount point.
 
 ## 2026-06-23
