@@ -1,5 +1,11 @@
 # Release Notes
 
+## 2026-07-22
+- Added WebUSB serial support for Android Chrome (#8): native chip drivers for FTDI (`web/js/ftdi-webusb.js`, FT231X/FT232R etc.) and Prolific PL2303 (`web/js/pl2303-webusb.js`, with per-generation chip detection from 01/HX/TA/TB through the HXN family), plus a CDC-ACM fallback via Google's lazily-imported `web-serial-polyfill`. A single WebUSB device chooser dispatches the chosen cable to the right driver, which exposes the Web Serial `SerialPort` surface so `BrowserSerialBridge` works identically over both transports. Hardware-verified on Android Chrome with FTDI and PL2303 cables completing real radio clone downloads; CH340/CP2102 are documented as unsupported.
+- The UI now shows one connect button per platform: native Web Serial on desktop, WebUSB on Android (where `navigator.serial` exists but cannot drive FTDI/PL2303-class programming cables).
+- Fixed a read-path deadlock in the WebUSB drivers: a `ReadableStream` `pull()` that resolved without enqueuing (status-only packet from an idle FTDI chip) was never re-invoked per the Streams spec, wedging all reads. Both drivers now poll inside `pull()` until real payload arrives and recover stalled bulk IN endpoints with `clearHalt`.
+- Added `npm run test:serial` — 22 unit tests covering transport selection/fallback, FTDI baud-divisor vectors and init, status-byte stripping, the read-deadlock regression, PL2303 chip detection and init sequences, DTR/RTS transitions, and chooser dispatch.
+
 ## 2026-07-21
 - Radio make/model dropdowns now populate instantly from a prebuilt static catalog (`web/radio-catalog.json`) instead of booting Pyodide and importing every CHIRP driver on first load; live driver enumeration remains as a fallback.
 - Added a `build:catalog` npm script (run automatically by `build:dist`) that regenerates the catalog from the local CHIRP submodule.
