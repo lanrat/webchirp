@@ -1,3 +1,5 @@
+import { createWebUsbSerial } from "./webusb-serial.js";
+
 // Parse user-entered hex byte text into a Uint8Array for serial writes.
 function parseHex(input) {
   const text = String(input || "").trim();
@@ -34,56 +36,153 @@ function concatUint8(a, b) {
   return out;
 }
 
+function hasNativeSerial() {
+  return typeof navigator !== "undefined" && "serial" in navigator;
+}
+
+function hasWebUsb() {
+  return typeof navigator !== "undefined" && "usb" in navigator;
+}
+
 // Manage Web Serial lifecycle and provide buffered byte-oriented I/O helpers.
 export class BrowserSerialBridge {
-  constructor() {
+  constructor({ createWebUsbSerial: createWebUsbSerialImpl } = {}) {
     this.port = null;
     this.reader = null;
     this.writer = null;
     this.readBuffer = new Uint8Array(0);
     this.readWaiters = new Set();
     this.lastDeviceName = "";
+    // Optional diagnostic sink (wired to the debug log by the app). The read
+    // loop MUST report why it ended: a silently-dead read loop is
+    // indistinguishable from "no data" and cost us a debugging session.
+    this.onDebug = null;
+    // The resolved Web Serial provider (native navigator.serial or the WebUSB
+    // chip-aware provider) and which transport it represents, set on connect.
+    this.serial = null;
+    this.transport = "";
+    // Which transport open() should use: "auto" (native preferred), "webserial",
+    // or "webusb". Forcing "webusb" is needed where native Web Serial exists but
+    // cannot drive the adapter (e.g. FTDI cables on Chrome for Android).
+    this.preferredTransport = "auto";
+    this._createWebUsbSerial = createWebUsbSerialImpl || createWebUsbSerial;
+  }
+
+  // Choose the transport open() will use. Resets any cached provider while
+  // disconnected so the next connect re-resolves against the new preference.
+  setPreferredTransport(transport) {
+    this.preferredTransport =
+      transport === "webusb" || transport === "webserial" ? transport : "auto";
+    if (!this.port) {
+      this.serial = null;
+      this.transport = "";
+    }
   }
 
   isSupported() {
-    return "serial" in navigator;
+    return hasNativeSerial() || hasWebUsb();
+  }
+
+  // Report what serial transport(s) this browser can offer.
+  getCapability() {
+    const native = hasNativeSerial();
+    const webusb = hasWebUsb();
+    return { supported: native || webusb, native, webusb };
+  }
+
+  // Resolve the serial provider: prefer native Web Serial, otherwise fall back
+  // to the WebUSB chip-aware provider. Cached after the first call.
+  async _ensureSerial() {
+    if (this.serial) {
+      return this.serial;
+    }
+    if (this.preferredTransport === "webusb") {
+      if (!hasWebUsb()) {
+        throw new Error("WebUSB is not supported in this browser.");
+      }
+      this.serial = this._createWebUsbSerial();
+      this.transport = "webusb";
+      return this.serial;
+    }
+    if (this.preferredTransport === "webserial") {
+      if (!hasNativeSerial()) {
+        throw new Error("Native Web Serial is not supported in this browser.");
+      }
+      this.serial = navigator.serial;
+      this.transport = "webserial";
+      return this.serial;
+    }
+    // Auto: prefer native Web Serial, fall back to the WebUSB chip-aware provider.
+    if (hasNativeSerial()) {
+      this.serial = navigator.serial;
+      this.transport = "webserial";
+      return this.serial;
+    }
+    if (hasWebUsb()) {
+      this.serial = this._createWebUsbSerial();
+      this.transport = "webusb";
+      return this.serial;
+    }
+    throw new Error("Neither Web Serial nor WebUSB is supported in this browser.");
   }
 
   async open(baudRate) {
-    if (!this.isSupported()) {
-      throw new Error("Web Serial is not supported in this browser.");
+    // A live connection requires a writer, not just a port handle. A previous
+    // attempt that failed mid-open can leave this.port set with no writer; treat
+    // that as not-connected and tear it down before retrying.
+    if (this.port && this.writer) {
+      return {
+        connected: true,
+        message: "Already connected.",
+        transport: this.transport,
+      };
     }
     if (this.port) {
-      return { connected: true, message: "Already connected." };
+      await this._teardown();
     }
 
-    this.port = await navigator.serial.requestPort({});
-    await this.port.open({
-      baudRate,
-      dataBits: 8,
-      stopBits: 1,
-      parity: "none",
-      flowControl: "none",
-    });
-    const identity = this._getPortIdentity(this.port);
-    this.lastDeviceName = this._describePort(this.port);
-    this.reader = this.port.readable.getReader();
-    this.writer = this.port.writable.getWriter();
-    this._startReadLoop();
-    return {
-      connected: true,
-      message: `Connected at ${baudRate} baud`,
-      deviceName: this.lastDeviceName,
-      usbVendorId: identity.usbVendorId,
-      usbProductId: identity.usbProductId,
-    };
+    const serial = await this._ensureSerial();
+    try {
+      this.port = await serial.requestPort({});
+      await this.port.open({
+        baudRate,
+        dataBits: 8,
+        stopBits: 1,
+        parity: "none",
+        flowControl: "none",
+      });
+      const identity = this._getPortIdentity(this.port);
+      this.lastDeviceName = this._describePort(this.port);
+      this.reader = this.port.readable.getReader();
+      this.writer = this.port.writable.getWriter();
+      this._startReadLoop();
+      const viaWebUsb = this.transport === "webusb";
+      return {
+        connected: true,
+        message: `Connected at ${baudRate} baud${viaWebUsb ? " (via WebUSB)" : ""}`,
+        deviceName: this.lastDeviceName,
+        usbVendorId: identity.usbVendorId,
+        usbProductId: identity.usbProductId,
+        transport: this.transport,
+      };
+    } catch (error) {
+      // Never leave a half-open port behind; it would poison the next connect.
+      await this._teardown();
+      throw error;
+    }
   }
 
   async close() {
     if (!this.port) {
       return { connected: false, message: "No port connected." };
     }
+    await this._teardown();
+    return { connected: false, message: "Disconnected." };
+  }
 
+  // Release reader/writer locks and close the port, clearing all session state.
+  // Safe to call on a fully- or partially-open port.
+  async _teardown() {
     try {
       await this.reader?.cancel();
     } catch {
@@ -100,7 +199,7 @@ export class BrowserSerialBridge {
       // Ignore lock-release errors.
     }
     try {
-      await this.port.close();
+      await this.port?.close();
     } catch {
       // Ignore close errors.
     }
@@ -110,7 +209,6 @@ export class BrowserSerialBridge {
     this.writer = null;
     this.readBuffer = new Uint8Array(0);
     this._resolveReadWaiters(false);
-    return { connected: false, message: "Disconnected." };
   }
 
   getPortInfo() {
@@ -197,21 +295,34 @@ export class BrowserSerialBridge {
     return { prepared: true };
   }
 
+  _debug(message) {
+    try {
+      this.onDebug?.(message);
+    } catch {
+      // A broken debug sink must never take down the serial path.
+    }
+  }
+
   async _startReadLoop() {
+    let endReason = "port closed";
     while (this.port && this.reader) {
       try {
         const { value, done } = await this.reader.read();
         if (done) {
+          endReason = "stream ended (done)";
           break;
         }
         if (value && value.length > 0) {
           this.readBuffer = concatUint8(this.readBuffer, value);
           this._resolveReadWaiters(true);
         }
-      } catch {
+      } catch (error) {
+        endReason = `read error: ${error?.message || error}`;
         break;
       }
     }
+    // Surface loop death loudly; a disconnect is expected, an error is not.
+    this._debug(`Serial read loop ended: ${endReason}`);
     this._resolveReadWaiters(false);
   }
 

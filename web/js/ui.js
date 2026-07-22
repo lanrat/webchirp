@@ -39,6 +39,7 @@ export function createUiController() {
   const radioMakeEl = document.querySelector("#radio-make");
   const radioModelEl = document.querySelector("#radio-model");
   const serialConnectToggleEl = document.querySelector("#serial-connect-toggle");
+  const webusbConnectToggleEl = document.querySelector("#serial-connect-webusb");
   const radioDownloadEl = document.querySelector("#radio-download");
   const radioUploadEl = document.querySelector("#radio-upload");
   const cloneProgressEl = document.querySelector("#clone-progress");
@@ -87,6 +88,8 @@ export function createUiController() {
   let runtimeInfo = { chirpRevision: "" };
   let lastUsbVendorId = "";
   let lastUsbProductId = "";
+  let serialTransportController = null;
+  let serialCapability = { supported: false, native: false, webusb: false };
   let lastErrorSummary = "";
   let currentEditorView = "channels";
   let activeSettingsTab = "";
@@ -139,6 +142,79 @@ export function createUiController() {
     runtimeApi = api;
   }
 
+  // Wire the serial bridge's transport controls (capability + forced transport)
+  // so the UI can offer an explicit WebUSB connect path.
+  function setSerialController(controller) {
+    serialTransportController = controller || null;
+    serialCapability = controller?.capability || serialCapability;
+    updateSerialActionState();
+  }
+
+  function setSerialButtonsBusy(busy) {
+    if (serialConnectToggleEl) {
+      serialConnectToggleEl.disabled = busy;
+    }
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.disabled = busy;
+    }
+  }
+
+  // Connect using the requested transport ("auto" or "webusb").
+  async function connectSerial(preferredTransport) {
+    if (serialConnected) {
+      return;
+    }
+    serialTransportController?.setPreferredTransport(preferredTransport);
+    setSerialButtonsBusy(true);
+    try {
+      const baudRate = Number(selectedRadio?.baudRate || 9600);
+      setStatus(`Connecting serial${preferredTransport === "webusb" ? " via WebUSB" : ""}...`);
+      const result = await requireRuntimeApi().serialConnect({ baudRate });
+      serialConnected = Boolean(result?.connected);
+      if (result?.deviceName) {
+        logDebug(`SERIAL DEVICE ${result.deviceName}`);
+      }
+      if (result?.transport) {
+        logSerial(`Transport: ${result.transport}`);
+      }
+      if (result?.usbVendorId) {
+        lastUsbVendorId = result.usbVendorId;
+      }
+      if (result?.usbProductId) {
+        lastUsbProductId = result.usbProductId;
+      }
+      if (lastUsbVendorId || lastUsbProductId) {
+        logDebug(`SERIAL USB ID ${lastUsbVendorId || "unknown"}:${lastUsbProductId || "unknown"}`);
+      }
+      setStatus(result.message || "Serial connected.");
+    } catch (error) {
+      reportActionError("Serial connect", error);
+      logSerial(`ERROR ${errorSummary(error)}`);
+    } finally {
+      setSerialButtonsBusy(false);
+      refreshSerialConnectToggleLabel();
+      updateSerialActionState();
+    }
+  }
+
+  async function disconnectSerial() {
+    setSerialButtonsBusy(true);
+    try {
+      setStatus("Disconnecting serial...");
+      const result = await requireRuntimeApi().serialDisconnect();
+      serialConnected = Boolean(result?.connected);
+      setStatus(result.message || "Serial disconnected.");
+    } catch (error) {
+      reportActionError("Serial disconnect", error);
+      logSerial(`ERROR ${errorSummary(error)}`);
+    } finally {
+      setSerialButtonsBusy(false);
+      refreshSerialConnectToggleLabel();
+      updateSerialActionState();
+    }
+  }
+
+
   function setSidebarControlsEnabled(enabled) {
     sidebarControlsEnabled = Boolean(enabled);
     for (const el of sidebarControlEls) {
@@ -162,10 +238,12 @@ export function createUiController() {
   }
 
   function refreshSerialConnectToggleLabel() {
-    if (!serialConnectToggleEl) {
-      return;
+    if (serialConnectToggleEl) {
+      serialConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect via WebSerial";
     }
-    serialConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect";
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect via WebUSB";
+    }
   }
 
   // Show the clone progress bar in its indeterminate state until the driver's
@@ -599,12 +677,28 @@ export function createUiController() {
 
     setLiveRadioSupportWarningVisible(liveRadioUnsupported);
 
+    // Exactly one connect control per platform: native Web Serial (desktop)
+    // gets the WebSerial toggle, WebUSB-only browsers (Android Chrome) get the
+    // WebUSB toggle. When neither API exists the WebSerial toggle stays visible
+    // (disabled) alongside the unsupported-browser warning.
+    const webusbOnly = serialCapability.webusb && !serialCapability.native;
+
     if (serialConnectToggleEl) {
+      serialConnectToggleEl.hidden = webusbOnly;
       serialConnectToggleEl.disabled = !actionsAllowed;
       serialConnectToggleEl.title = liveRadioUnsupported
         ? "Live-mode radios are not supported in this UI yet"
         : "";
     }
+
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.hidden = !webusbOnly;
+      webusbConnectToggleEl.disabled = !actionsAllowed;
+      webusbConnectToggleEl.title = liveRadioUnsupported
+        ? "Live-mode radios are not supported in this UI yet"
+        : "Connect over WebUSB, for use with FTDI FT231X/FT232R or Prolific PL2303";
+    }
+
 
     if (radioDownloadEl) {
       radioDownloadEl.disabled = !actionsAllowed;
@@ -2232,44 +2326,22 @@ export function createUiController() {
       renderSettingsPanel();
     });
 
-    serialConnectToggleEl?.addEventListener("click", async () => {
-      serialConnectToggleEl.disabled = true;
-      try {
-        if (serialConnected) {
-          setStatus("Disconnecting serial...");
-          const result = await requireRuntimeApi().serialDisconnect();
-          serialConnected = Boolean(result?.connected);
-          refreshSerialConnectToggleLabel();
-          setStatus(result.message || "Serial disconnected.");
-          return;
-        }
-
-        const baudRate = Number(selectedRadio?.baudRate || 9600);
-        setStatus("Connecting serial...");
-        const result = await requireRuntimeApi().serialConnect({ baudRate });
-        serialConnected = Boolean(result?.connected);
-        refreshSerialConnectToggleLabel();
-        if (result?.deviceName) {
-          logDebug(`SERIAL DEVICE ${result.deviceName}`);
-        }
-        if (result?.usbVendorId) {
-          lastUsbVendorId = result.usbVendorId;
-        }
-        if (result?.usbProductId) {
-          lastUsbProductId = result.usbProductId;
-        }
-        if (lastUsbVendorId || lastUsbProductId) {
-          logDebug(`SERIAL USB ID ${lastUsbVendorId || "unknown"}:${lastUsbProductId || "unknown"}`);
-        }
-        setStatus(result.message || "Serial connected.");
-      } catch (error) {
-        const action = serialConnected ? "Serial disconnect" : "Serial connect";
-        reportActionError(action, error);
-        logSerial(`ERROR ${errorSummary(error)}`);
-      } finally {
-        serialConnectToggleEl.disabled = false;
+    serialConnectToggleEl?.addEventListener("click", () => {
+      if (serialConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial("auto");
       }
     });
+
+    webusbConnectToggleEl?.addEventListener("click", () => {
+      if (serialConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial("webusb");
+      }
+    });
+
 
     document.querySelector("#serial-transaction")?.addEventListener("click", async () => {
       const txHex = document.querySelector("#tx-hex")?.value || "";
@@ -2290,6 +2362,26 @@ export function createUiController() {
     document.querySelector("#debug-clear").addEventListener("click", () => {
       debugOutputEl.value = "";
       lastErrorSummary = "";
+    });
+
+    document.querySelector("#debug-copy")?.addEventListener("click", async () => {
+      const text = debugOutputEl.value || "";
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          // Fallback for browsers/contexts without the async clipboard API.
+          debugOutputEl.focus();
+          debugOutputEl.select();
+          document.execCommand("copy");
+        }
+        setStatus("Debug log copied to clipboard.");
+      } catch {
+        // Last resort: select the text so the user can copy manually.
+        debugOutputEl.focus();
+        debugOutputEl.select();
+        setStatus("Could not copy automatically; log text is selected — copy it manually.");
+      }
     });
 
     reportIssueEl?.addEventListener("click", () => {
@@ -2420,6 +2512,7 @@ export function createUiController() {
 
   return {
     setRuntimeApi,
+    setSerialController,
     setStatus,
     logSerial,
     logDebug,
