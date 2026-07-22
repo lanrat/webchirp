@@ -38,7 +38,7 @@ This repository hosts a browser-based CHIRP interface (`web/`) that executes CHI
 - Keep commits small and scoped to one functional fix/refactor when practical.
 - Include clear commit messages that describe user-visible behavior or architectural impact.
 - Include the user's input/request text in every commit message for agent-authored changes.
-- Before committing, edit RELEASE_NOTES.md, prepend an entry with the current date, or if the date is the same as today - append to the entry.
+- Do not modify RELEASE_NOTES.md when on a branch. When on master, update RELEASE_NOTES.md based on PRs which were merged in with current date.
 
 # PR Behaviour
 - When submitting a PR, in the PR description include any new dependencies which were added.

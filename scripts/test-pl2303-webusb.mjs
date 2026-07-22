@@ -1,0 +1,214 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  PL2303_TYPE_01,
+  PL2303_TYPE_HX,
+  PL2303_TYPE_HXN,
+  PL2303_TYPE_T,
+  PROLIFIC_VENDOR_ID,
+  Pl2303SerialPort,
+  detectPl2303Type,
+  isProlificDevice,
+  pickPl2303BaudRate,
+} from "../web/js/pl2303-webusb.js";
+import { createWebUsbSerial } from "../web/js/webusb-serial.js";
+
+function setNavigator(value) {
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value });
+}
+
+// A device descriptor blob for GET_DESCRIPTOR: bcdUSB at bytes 2-3,
+// bDeviceClass at 4, bMaxPacketSize0 at 7, bcdDevice at bytes 12-13.
+function descriptorBytes({ usbVersion, deviceClass, maxPacketSize0, deviceVersion }) {
+  const bytes = new Uint8Array(18);
+  bytes[2] = usbVersion & 0xff;
+  bytes[3] = (usbVersion >> 8) & 0xff;
+  bytes[4] = deviceClass;
+  bytes[7] = maxPacketSize0;
+  bytes[12] = deviceVersion & 0xff;
+  bytes[13] = (deviceVersion >> 8) & 0xff;
+  return bytes;
+}
+
+// Fake USBDevice for a PL2303: interrupt IN + bulk OUT + bulk IN endpoints,
+// records all control transfers, answers GET_DESCRIPTOR and the HX probe.
+function makeFakeDevice({ descriptor, hxProbeSucceeds = true }) {
+  const controlIn = [];
+  const controlOut = [];
+  const device = {
+    vendorId: 0x067b,
+    productId: 0x2303,
+    configuration: {
+      interfaces: [
+        {
+          interfaceNumber: 0,
+          alternate: {
+            endpoints: [
+              { type: "interrupt", direction: "in", endpointNumber: 1, packetSize: 10 },
+              { type: "bulk", direction: "out", endpointNumber: 2, packetSize: 64 },
+              { type: "bulk", direction: "in", endpointNumber: 3, packetSize: 64 },
+            ],
+          },
+        },
+      ],
+    },
+    open: async () => {},
+    claimInterface: async () => {},
+    controlTransferIn: async (setup, length) => {
+      controlIn.push({ ...setup, length });
+      if (setup.requestType === "standard" && setup.request === 0x06) {
+        return { status: "ok", data: new DataView(descriptorBytes(descriptor).buffer) };
+      }
+      if (setup.requestType === "vendor" && setup.value === 0x8080) {
+        if (!hxProbeSucceeds) {
+          throw new Error("stall");
+        }
+        return { status: "ok", data: new DataView(new Uint8Array([0]).buffer) };
+      }
+      return { status: "ok", data: new DataView(new Uint8Array(length || 1).buffer) };
+    },
+    controlTransferOut: async (setup, data) => {
+      controlOut.push({ ...setup, data: data ? new Uint8Array(data.slice ? data.slice(0) : data) : null });
+      return { status: "ok" };
+    },
+    transferIn: async () => new Promise(() => {}),
+    transferOut: async () => ({ status: "ok" }),
+  };
+  return { device, controlIn, controlOut };
+}
+
+const HX_DESCRIPTOR = { usbVersion: 0x110, deviceClass: 0, maxPacketSize0: 64, deviceVersion: 0x400 };
+const HXN_DESCRIPTOR = { usbVersion: 0x200, deviceClass: 0, maxPacketSize0: 64, deviceVersion: 0x100 };
+
+test("isProlificDevice recognizes the Prolific vendor id", () => {
+  assert.equal(PROLIFIC_VENDOR_ID, 0x067b);
+  assert.ok(isProlificDevice({ vendorId: 0x067b, productId: 0x2303 }));
+  assert.ok(!isProlificDevice({ vendorId: 0x0403, productId: 0x6015 })); // FTDI
+  assert.ok(!isProlificDevice(null));
+});
+
+test("pickPl2303BaudRate returns exact standard rates and rejects nonsense", () => {
+  assert.equal(pickPl2303BaudRate(9600), 9600);
+  assert.equal(pickPl2303BaudRate(115200), 115200);
+  assert.equal(pickPl2303BaudRate(9500), 9600); // nearest supported
+  assert.throws(() => pickPl2303BaudRate(0), /Invalid PL2303 baud rate/);
+});
+
+test("detectPl2303Type follows the usb-serial-for-android ladder", () => {
+  // CDC device class or 8-byte EP0 -> original chips.
+  assert.equal(detectPl2303Type({ deviceClass: 0x02, maxPacketSize0: 64, usbVersion: 0x110, deviceVersion: 0x300, hxStatus: true }), PL2303_TYPE_01);
+  assert.equal(detectPl2303Type({ deviceClass: 0, maxPacketSize0: 8, usbVersion: 0x110, deviceVersion: 0x300, hxStatus: true }), PL2303_TYPE_01);
+  // TA: bcdDevice 3.00 on USB 2.0; TB: bcdDevice 5.00.
+  assert.equal(detectPl2303Type({ deviceClass: 0, maxPacketSize0: 64, usbVersion: 0x200, deviceVersion: 0x300, hxStatus: true }), PL2303_TYPE_T);
+  assert.equal(detectPl2303Type({ deviceClass: 0, maxPacketSize0: 64, usbVersion: 0x200, deviceVersion: 0x500, hxStatus: true }), PL2303_TYPE_T);
+  // USB 2.0 chip that rejects the legacy register -> HXN family.
+  assert.equal(detectPl2303Type({ deviceClass: 0, maxPacketSize0: 64, usbVersion: 0x200, deviceVersion: 0x100, hxStatus: false }), PL2303_TYPE_HXN);
+  // USB 1.1 -> classic HX.
+  assert.equal(detectPl2303Type({ deviceClass: 0, maxPacketSize0: 64, usbVersion: 0x110, deviceVersion: 0x400, hxStatus: true }), PL2303_TYPE_HX);
+});
+
+test("HX open() runs the legacy startup with kernel-correct request types", async () => {
+  const { device, controlOut } = makeFakeDevice({ descriptor: HX_DESCRIPTOR });
+  const port = new Pl2303SerialPort(device);
+  await port.open({ baudRate: 9600 });
+
+  assert.equal(port.chipType, PL2303_TYPE_HX);
+  // Vendor writes must be requestType "vendor" with legacy bRequest 0x01
+  // (tidepool/emcee send these as "class", diverging from the kernel).
+  const vendorWrites = controlOut.filter((t) => t.requestType === "vendor");
+  assert.ok(vendorWrites.length >= 6, "legacy startup must issue vendor writes");
+  for (const t of vendorWrites) {
+    assert.equal(t.request, 0x01, "non-HXN vendor writes use bRequest 0x01");
+    assert.equal(t.recipient, "device");
+  }
+  // The startup dance ends with register 2 = 0x44 for non-01 chips.
+  assert.ok(vendorWrites.some((t) => t.value === 2 && t.index === 0x44));
+  // Legacy purge: registers 8 and 9.
+  assert.ok(vendorWrites.some((t) => t.value === 8 && t.index === 0));
+  assert.ok(vendorWrites.some((t) => t.value === 9 && t.index === 0));
+  // Line coding: class/interface SET_LINE (0x20), 7 bytes, 9600 LE32 + 8N1.
+  const setLine = controlOut.find((t) => t.requestType === "class" && t.request === 0x20);
+  assert.ok(setLine, "line coding must be written");
+  assert.deepEqual(Array.from(setLine.data), [0x80, 0x25, 0x00, 0x00, 0, 0, 8]);
+  // Bulk endpoints selected, interrupt endpoint skipped.
+  assert.equal(port._inEndpoint, 3);
+  assert.equal(port._outEndpoint, 2);
+});
+
+test("HXN open() skips the legacy startup and uses HXN registers", async () => {
+  const { device, controlOut } = makeFakeDevice({
+    descriptor: HXN_DESCRIPTOR,
+    hxProbeSucceeds: false,
+  });
+  const port = new Pl2303SerialPort(device);
+  await port.open({ baudRate: 9600 });
+
+  assert.equal(port.chipType, PL2303_TYPE_HXN);
+  const vendorWrites = controlOut.filter((t) => t.requestType === "vendor");
+  // No legacy 0x0404 startup writes on HXN silicon.
+  assert.ok(!vendorWrites.some((t) => t.value === 0x0404), "HXN must skip legacy startup");
+  // All HXN vendor writes use bRequest 0x80.
+  for (const t of vendorWrites) {
+    assert.equal(t.request, 0x80, "HXN vendor writes use bRequest 0x80");
+  }
+  // HXN purge: request 0x07 with both pipe bits; HXN flow-control register.
+  assert.ok(vendorWrites.some((t) => t.value === 0x07 && t.index === 0x03));
+  assert.ok(vendorWrites.some((t) => t.value === 0x0a && t.index === 0xff));
+});
+
+test("setSignals sets absolute DTR|RTS value while preserving cached lines", async () => {
+  const { device, controlOut } = makeFakeDevice({ descriptor: HX_DESCRIPTOR });
+  const port = new Pl2303SerialPort(device);
+  await port.open({ baudRate: 9600 });
+  controlOut.length = 0;
+
+  await port.setSignals({ dataTerminalReady: true });
+  await port.setSignals({ requestToSend: true }); // must keep DTR set
+  await port.setSignals({ dataTerminalReady: false }); // must keep RTS set
+  await port.setSignals({ requestToSend: true }); // no change -> no transfer
+
+  const controls = controlOut.filter((t) => t.request === 0x22);
+  assert.deepEqual(controls.map((t) => t.value), [0x01, 0x03, 0x02]);
+  for (const t of controls) {
+    assert.equal(t.requestType, "class");
+    assert.equal(t.recipient, "interface");
+  }
+});
+
+test("read path passes bulk payload through unmodified (no status header)", async () => {
+  const { device } = makeFakeDevice({ descriptor: HX_DESCRIPTOR });
+  const packets = [
+    { status: "ok", data: new DataView(new Uint8Array([0x50, 0xbb, 0xff]).buffer) },
+  ];
+  device.transferIn = async () => packets.shift() ?? new Promise(() => {});
+  const port = new Pl2303SerialPort(device);
+  await port.open({ baudRate: 9600 });
+
+  const reader = port.readable.getReader();
+  const { value } = await reader.read();
+  // Unlike FTDI, PL2303 payload has no 2-byte status prefix to strip.
+  assert.deepEqual(Array.from(value), [0x50, 0xbb, 0xff]);
+});
+
+test("WebUSB provider dispatches Prolific devices to the PL2303 driver", async () => {
+  let requestedOptions = null;
+  setNavigator({
+    usb: {
+      requestDevice: async (options) => {
+        requestedOptions = options;
+        return { vendorId: 0x067b, productId: 0x2303 };
+      },
+    },
+  });
+  const serial = createWebUsbSerial({
+    loadCdcSerialPort: async () => {
+      throw new Error("CDC polyfill should not load for PL2303 devices");
+    },
+  });
+  const port = await serial.requestPort();
+  assert.ok(port instanceof Pl2303SerialPort);
+  assert.ok(
+    requestedOptions?.filters?.some((f) => f.vendorId === PROLIFIC_VENDOR_ID),
+    "requestDevice must be called with a Prolific vendor filter",
+  );
+});

@@ -22,6 +22,7 @@ const DEFAULT_SAMPLE_CSV = `Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq
 const ISSUE_TEMPLATE_NAME = "radio_bug_report.yml";
 const ISSUE_NEW_URL = "https://github.com/jasiek/webchirp/issues/new";
 const LAST_RADIO_COOKIE = "webchirp_last_radio";
+const SEARCH_RELOAD_DEBOUNCE_MS = 350;
 
 // Create and manage all DOM/UI state and user interaction behavior.
 export function createUiController() {
@@ -41,11 +42,17 @@ export function createUiController() {
   const reportIssueEl = document.querySelector("#report-issue");
   const serialSupportWarningEl = document.querySelector("#webserial-support-warning");
   const liveRadioSupportWarningEl = document.querySelector("#live-radio-support-warning");
+  const radioSearchEl = document.querySelector("#radio-search");
   const radioMakeEl = document.querySelector("#radio-make");
   const radioModelEl = document.querySelector("#radio-model");
   const serialConnectToggleEl = document.querySelector("#serial-connect-toggle");
+  const webusbConnectToggleEl = document.querySelector("#serial-connect-webusb");
   const radioDownloadEl = document.querySelector("#radio-download");
   const radioUploadEl = document.querySelector("#radio-upload");
+  const cloneProgressEl = document.querySelector("#clone-progress");
+  const cloneProgressBarEl = document.querySelector("#clone-progress-bar");
+  const cloneProgressLabelEl = document.querySelector("#clone-progress-label");
+  const cloneProgressPercentEl = document.querySelector("#clone-progress-percent");
   const channelInsertEl = document.querySelector("#channel-insert");
   const channelRemoveEl = document.querySelector("#channel-remove");
   const channelMoveUpEl = document.querySelector("#channel-move-up");
@@ -80,12 +87,21 @@ export function createUiController() {
   let currentHeaders = [];
   let currentRows = [];
   let radioCatalog = [];
+  let radioFilterText = "";
   let selectedRadio = null;
   let radioMetadata = { headers: [], columns: {} };
   let radioSettingsState = { supported: false, available: false, requiresImage: false, message: "", groups: [] };
+  // Only the newest metadata/settings load may apply its results; older
+  // in-flight responses would otherwise overwrite state for a radio the user
+  // has already navigated away from.
+  let radioLoadSequence = 0;
+  let lastLoadedRadioKey = "";
+  let searchReloadTimer = null;
   let runtimeInfo = { chirpRevision: "" };
   let lastUsbVendorId = "";
   let lastUsbProductId = "";
+  let serialTransportController = null;
+  let serialCapability = { supported: false, native: false, webusb: false };
   let lastErrorSummary = "";
   let currentEditorView = "channels";
   let activeSettingsTab = "";
@@ -99,6 +115,10 @@ export function createUiController() {
   let activeRepeaterQuerySource = "przemienniki";
   let sidebarControlsEnabled = false;
   let serialConnected = false;
+  // Transport of the active connection ("webserial" or "webusb"), used to
+  // collapse the two connect toggles to a single Disconnect button when both
+  // are visible (Android).
+  let serialTransport = "";
 
   const repeaterQuerySources = {
     przemienniki: {
@@ -138,6 +158,83 @@ export function createUiController() {
     runtimeApi = api;
   }
 
+  // Wire the serial bridge's transport controls (capability + forced transport)
+  // so the UI can offer an explicit WebUSB connect path.
+  function setSerialController(controller) {
+    serialTransportController = controller || null;
+    serialCapability = controller?.capability || serialCapability;
+    updateSerialActionState();
+  }
+
+  function setSerialButtonsBusy(busy) {
+    if (serialConnectToggleEl) {
+      serialConnectToggleEl.disabled = busy;
+    }
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.disabled = busy;
+    }
+  }
+
+  // Connect using the requested transport ("auto" or "webusb").
+  async function connectSerial(preferredTransport) {
+    if (serialConnected) {
+      return;
+    }
+    serialTransportController?.setPreferredTransport(preferredTransport);
+    setSerialButtonsBusy(true);
+    try {
+      const baudRate = Number(selectedRadio?.baudRate || 9600);
+      setStatus(`Connecting serial${preferredTransport === "webusb" ? " via WebUSB" : ""}...`);
+      const result = await requireRuntimeApi().serialConnect({ baudRate });
+      serialConnected = Boolean(result?.connected);
+      if (result?.deviceName) {
+        logDebug(`SERIAL DEVICE ${result.deviceName}`);
+      }
+      serialTransport = result?.transport || "";
+      if (result?.transport) {
+        logSerial(`Transport: ${result.transport}`);
+      }
+      if (result?.usbVendorId) {
+        lastUsbVendorId = result.usbVendorId;
+      }
+      if (result?.usbProductId) {
+        lastUsbProductId = result.usbProductId;
+      }
+      if (lastUsbVendorId || lastUsbProductId) {
+        logDebug(`SERIAL USB ID ${lastUsbVendorId || "unknown"}:${lastUsbProductId || "unknown"}`);
+      }
+      setStatus(result.message || "Serial connected.");
+    } catch (error) {
+      reportActionError("Serial connect", error);
+      logSerial(`ERROR ${errorSummary(error)}`);
+    } finally {
+      setSerialButtonsBusy(false);
+      refreshSerialConnectToggleLabel();
+      updateSerialActionState();
+    }
+  }
+
+  async function disconnectSerial() {
+    setSerialButtonsBusy(true);
+    try {
+      setStatus("Disconnecting serial...");
+      const result = await requireRuntimeApi().serialDisconnect();
+      serialConnected = Boolean(result?.connected);
+      if (!serialConnected) {
+        serialTransport = "";
+      }
+      setStatus(result.message || "Serial disconnected.");
+    } catch (error) {
+      reportActionError("Serial disconnect", error);
+      logSerial(`ERROR ${errorSummary(error)}`);
+    } finally {
+      setSerialButtonsBusy(false);
+      refreshSerialConnectToggleLabel();
+      updateSerialActionState();
+    }
+  }
+
+
   function setSidebarControlsEnabled(enabled) {
     sidebarControlsEnabled = Boolean(enabled);
     for (const el of sidebarControlEls) {
@@ -161,10 +258,69 @@ export function createUiController() {
   }
 
   function refreshSerialConnectToggleLabel() {
-    if (!serialConnectToggleEl) {
+    // Mobile has no hover tooltips, so on Android the labels themselves say
+    // what each transport is for.
+    const mobile = isAndroidPlatform();
+    if (serialConnectToggleEl) {
+      serialConnectToggleEl.textContent = serialConnected
+        ? "Disconnect"
+        : (mobile ? "Connect via WebSerial (Bluetooth)" : "Connect via WebSerial");
+    }
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.textContent = serialConnected
+        ? "Disconnect"
+        : (mobile ? "Connect via WebUSB (wired adapter)" : "Connect via WebUSB");
+    }
+  }
+
+  // Show the clone progress bar in its indeterminate state until the driver's
+  // first status report arrives with real block counts.
+  function beginCloneProgress(label) {
+    if (!cloneProgressEl) {
       return;
     }
-    serialConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect";
+    if (cloneProgressLabelEl) {
+      cloneProgressLabelEl.textContent = String(label || "Working...");
+    }
+    if (cloneProgressPercentEl) {
+      cloneProgressPercentEl.textContent = "";
+    }
+    cloneProgressBarEl?.removeAttribute?.("value");
+    cloneProgressEl.hidden = false;
+  }
+
+  // CHIRP drivers report status once per transferred block (cur/max may be -1
+  // when a driver reports no counts; the bar then stays indeterminate).
+  function updateCloneProgress(cur, max, msg) {
+    if (!cloneProgressEl) {
+      return;
+    }
+    cloneProgressEl.hidden = false;
+    if (msg && cloneProgressLabelEl) {
+      cloneProgressLabelEl.textContent = msg;
+    }
+    if (Number.isFinite(cur) && Number.isFinite(max) && max > 0 && cur >= 0) {
+      const percent = Math.max(0, Math.min(100, Math.round((cur / max) * 100)));
+      if (cloneProgressBarEl) {
+        cloneProgressBarEl.value = percent;
+      }
+      if (cloneProgressPercentEl) {
+        cloneProgressPercentEl.textContent = `${percent}%`;
+      }
+    } else {
+      // A no-count report must not leave the previous phase's percentage on
+      // screen: removing value makes the <progress> bar indeterminate again.
+      cloneProgressBarEl?.removeAttribute?.("value");
+      if (cloneProgressPercentEl) {
+        cloneProgressPercentEl.textContent = "";
+      }
+    }
+  }
+
+  function endCloneProgress() {
+    if (cloneProgressEl) {
+      cloneProgressEl.hidden = true;
+    }
   }
 
   function setCookie(name, value, maxAgeSeconds = 31536000) {
@@ -212,6 +368,7 @@ export function createUiController() {
     if (!radioCatalog.some((r) => r.vendor === make && r.key === key)) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = make;
     refreshModelOptions();
     radioModelEl.value = key;
@@ -541,18 +698,55 @@ export function createUiController() {
     return Boolean(selectedRadio?.isLiveRadio);
   }
 
+  // Android's native Web Serial only reaches Bluetooth RFCOMM serial ports, so
+  // the WebUSB connect path must stay available there for wired USB adapters.
+  function isAndroidPlatform() {
+    return /\bAndroid\b/i.test(navigator.userAgent || "");
+  }
+
   function updateSerialActionState() {
     const liveRadioUnsupported = selectedRadioIsLiveMode();
     const actionsAllowed = sidebarControlsEnabled && !liveRadioUnsupported;
 
     setLiveRadioSupportWarningVisible(liveRadioUnsupported);
 
+    // Connect controls by platform capability:
+    // - Desktop with native Web Serial: WebSerial toggle only.
+    // - Android with native Web Serial (Bluetooth RFCOMM serial ports): both
+    //   toggles — WebSerial for Bluetooth serial, WebUSB for wired USB
+    //   adapters, which Android's native Web Serial cannot drive.
+    // - WebUSB-only browsers (older Android Chrome): WebUSB toggle only.
+    // - Neither API: the WebSerial toggle stays visible (disabled) alongside
+    //   the unsupported-browser warning.
+    const webusbOnly = serialCapability.webusb && !serialCapability.native;
+    let showWebSerialToggle = !webusbOnly;
+    let showWebUsbToggle =
+      serialCapability.webusb && (!serialCapability.native || isAndroidPlatform());
+    // While connected, collapse to a single Disconnect button on the toggle
+    // matching the active transport.
+    if (serialConnected && showWebSerialToggle && showWebUsbToggle) {
+      showWebUsbToggle = serialTransport === "webusb";
+      showWebSerialToggle = !showWebUsbToggle;
+    }
+
     if (serialConnectToggleEl) {
+      serialConnectToggleEl.hidden = !showWebSerialToggle;
       serialConnectToggleEl.disabled = !actionsAllowed;
       serialConnectToggleEl.title = liveRadioUnsupported
         ? "Live-mode radios are not supported in this UI yet"
-        : "";
+        : (isAndroidPlatform()
+          ? "Connect over native Web Serial, for use with Bluetooth serial ports"
+          : "");
     }
+
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.hidden = !showWebUsbToggle;
+      webusbConnectToggleEl.disabled = !actionsAllowed;
+      webusbConnectToggleEl.title = liveRadioUnsupported
+        ? "Live-mode radios are not supported in this UI yet"
+        : "Connect over WebUSB, for use with FTDI FT231X/FT232R or Prolific PL2303";
+    }
+
 
     if (radioDownloadEl) {
       radioDownloadEl.disabled = !actionsAllowed;
@@ -652,6 +846,71 @@ export function createUiController() {
     );
   }
 
+  // Match a radio against a search query; every whitespace-separated token must
+  // appear somewhere in the "vendor model class" text (case-insensitive).
+  function radioMatchesFilter(radio, tokens) {
+    if (tokens.length === 0) {
+      return true;
+    }
+    const haystack = `${radio.vendor} ${radio.model} ${radio.className}`.toLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  }
+
+  // The catalog entries currently visible given the search filter.
+  function visibleCatalog() {
+    const tokens = radioFilterText.toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+      return radioCatalog;
+    }
+    return radioCatalog.filter((radio) => radioMatchesFilter(radio, tokens));
+  }
+
+  // Clear the search filter so programmatic selections see the full catalog.
+  function clearRadioFilter() {
+    radioFilterText = "";
+    if (radioSearchEl) {
+      radioSearchEl.value = "";
+    }
+  }
+
+  // Shared side effects after the selected radio changes via make/model/search.
+  function reloadForSelectedRadio() {
+    updateSerialActionState();
+    persistSelectedRadioCookie();
+    clearInvalidHighlights();
+    clearInvalidSettings();
+    if (selectedRadio && selectedRadio.key === lastLoadedRadioKey) {
+      renderTable();
+      return;
+    }
+    const loadToken = nextRadioLoadToken();
+    Promise.all([
+      loadSelectedRadioMetadata(loadToken),
+      loadSelectedRadioSettings({ loadToken }),
+    ])
+      .then(() => {
+        if (isStaleRadioLoad(loadToken)) {
+          return;
+        }
+        lastLoadedRadioKey = selectedRadio?.key || "";
+        renderTable();
+      })
+      .catch((error) => {
+        if (!isStaleRadioLoad(loadToken)) {
+          reportActionError("Metadata load", error);
+        }
+      });
+  }
+
+  function nextRadioLoadToken() {
+    radioLoadSequence += 1;
+    return radioLoadSequence;
+  }
+
+  function isStaleRadioLoad(loadToken) {
+    return loadToken !== radioLoadSequence;
+  }
+
   function formatRadioModelOption(radio, hasDuplicateModel) {
     const modelLabel = radio.isLiveRadio ? `⚡ ${radio.model}` : radio.model;
     return hasDuplicateModel ? `${modelLabel} (${radio.className})` : modelLabel;
@@ -675,7 +934,7 @@ export function createUiController() {
   // Populate model dropdown for selected vendor and refresh selection state.
   function refreshModelOptions() {
     const vendor = radioMakeEl.value;
-    const models = radioCatalog.filter((r) => r.vendor === vendor);
+    const models = visibleCatalog().filter((r) => r.vendor === vendor);
     const modelCounts = new Map();
     for (const radio of models) {
       modelCounts.set(radio.model, (modelCounts.get(radio.model) || 0) + 1);
@@ -708,6 +967,7 @@ export function createUiController() {
     if (!target) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = target.vendor;
     refreshModelOptions();
     radioModelEl.value = target.key;
@@ -731,6 +991,7 @@ export function createUiController() {
     if (!fallback) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = fallback.vendor;
     refreshModelOptions();
     radioModelEl.value = fallback.key;
@@ -739,19 +1000,31 @@ export function createUiController() {
     return true;
   }
 
-  // Populate make dropdown from catalog and initialize model options.
+  // Populate make dropdown from the (optionally filtered) catalog and initialize
+  // model options, preserving the current vendor when it is still visible.
   function refreshMakeOptions() {
-    const vendors = uniqueVendors(radioCatalog);
+    const previousVendor = radioMakeEl.value;
+    const vendors = uniqueVendors(visibleCatalog());
     radioMakeEl.innerHTML = "";
+
+    if (vendors.length === 0) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No matching radios";
+      radioMakeEl.appendChild(option);
+      radioModelEl.innerHTML = "";
+      selectedRadio = null;
+      updateSerialActionState();
+      return;
+    }
+
     for (const vendor of vendors) {
       const option = document.createElement("option");
       option.value = vendor;
       option.textContent = vendor;
       radioMakeEl.appendChild(option);
     }
-    if (vendors.length > 0) {
-      radioMakeEl.value = vendors[0];
-    }
+    radioMakeEl.value = vendors.includes(previousVendor) ? previousVendor : vendors[0];
     refreshModelOptions();
   }
 
@@ -1578,7 +1851,7 @@ export function createUiController() {
   }
 
   // Load selected radio's CHIRP-derived column metadata from Python runtime.
-  async function loadSelectedRadioMetadata() {
+  async function loadSelectedRadioMetadata(loadToken = nextRadioLoadToken()) {
     if (!selectedRadio) {
       return;
     }
@@ -1586,11 +1859,15 @@ export function createUiController() {
       module: selectedRadio.module,
       className: selectedRadio.className,
     });
+    if (isStaleRadioLoad(loadToken)) {
+      return;
+    }
     radioMetadata = meta || { headers: [], columns: {} };
     currentHeaders = radioMetadata.headers?.length ? radioMetadata.headers : currentHeaders;
   }
 
   async function loadSelectedRadioSettings(options = {}) {
+    const loadToken = options.loadToken ?? nextRadioLoadToken();
     if (!selectedRadio) {
       radioSettingsState = {
         supported: false,
@@ -1627,6 +1904,10 @@ export function createUiController() {
     } catch (error) {
       logDebug(`SETTINGS LOAD FALLBACK ${errorSummary(error)}`);
       nextState.message = "Radio-wide settings could not be prepared.";
+    }
+
+    if (isStaleRadioLoad(loadToken)) {
+      return;
     }
 
     if (preserveCurrent && radioHasSettings() && nextState.supported) {
@@ -2311,18 +2592,26 @@ export function createUiController() {
       }
     });
 
+    // Filtering only narrows the dropdowns; defer the (Pyodide-backed)
+    // metadata/settings load until typing settles, and skip it entirely when
+    // the effective selection did not change.
+    radioSearchEl?.addEventListener("input", () => {
+      radioFilterText = String(radioSearchEl.value || "").trim();
+      const previousKey = selectedRadio?.key || "";
+      refreshMakeOptions();
+      if ((selectedRadio?.key || "") === previousKey) {
+        return;
+      }
+      clearTimeout(searchReloadTimer);
+      searchReloadTimer = setTimeout(() => {
+        searchReloadTimer = null;
+        reloadForSelectedRadio();
+      }, SEARCH_RELOAD_DEBOUNCE_MS);
+    });
+
     radioMakeEl.addEventListener("change", () => {
       refreshModelOptions();
-      updateSerialActionState();
-      persistSelectedRadioCookie();
-      clearInvalidHighlights();
-      clearInvalidSettings();
-      Promise.all([
-        loadSelectedRadioMetadata(),
-        loadSelectedRadioSettings(),
-      ])
-        .then(() => renderTable())
-        .catch((error) => reportActionError("Metadata load", error));
+      reloadForSelectedRadio();
     });
 
     radioModelEl.addEventListener("change", () => {
@@ -2333,16 +2622,7 @@ export function createUiController() {
           `RADIO SELECT ${makeModelLabel(selectedRadio)} (${selectedRadio.module}.${selectedRadio.className})`,
         );
       }
-      updateSerialActionState();
-      persistSelectedRadioCookie();
-      clearInvalidHighlights();
-      clearInvalidSettings();
-      Promise.all([
-        loadSelectedRadioMetadata(),
-        loadSelectedRadioSettings(),
-      ])
-        .then(() => renderTable())
-        .catch((error) => reportActionError("Metadata load", error));
+      reloadForSelectedRadio();
     });
 
     viewChannelsEl?.addEventListener("click", () => {
@@ -2358,44 +2638,22 @@ export function createUiController() {
       renderSettingsPanel();
     });
 
-    serialConnectToggleEl?.addEventListener("click", async () => {
-      serialConnectToggleEl.disabled = true;
-      try {
-        if (serialConnected) {
-          setStatus("Disconnecting serial...");
-          const result = await requireRuntimeApi().serialDisconnect();
-          serialConnected = Boolean(result?.connected);
-          refreshSerialConnectToggleLabel();
-          setStatus(result.message || "Serial disconnected.");
-          return;
-        }
-
-        const baudRate = Number(selectedRadio?.baudRate || 9600);
-        setStatus("Connecting serial...");
-        const result = await requireRuntimeApi().serialConnect({ baudRate });
-        serialConnected = Boolean(result?.connected);
-        refreshSerialConnectToggleLabel();
-        if (result?.deviceName) {
-          logDebug(`SERIAL DEVICE ${result.deviceName}`);
-        }
-        if (result?.usbVendorId) {
-          lastUsbVendorId = result.usbVendorId;
-        }
-        if (result?.usbProductId) {
-          lastUsbProductId = result.usbProductId;
-        }
-        if (lastUsbVendorId || lastUsbProductId) {
-          logDebug(`SERIAL USB ID ${lastUsbVendorId || "unknown"}:${lastUsbProductId || "unknown"}`);
-        }
-        setStatus(result.message || "Serial connected.");
-      } catch (error) {
-        const action = serialConnected ? "Serial disconnect" : "Serial connect";
-        reportActionError(action, error);
-        logSerial(`ERROR ${errorSummary(error)}`);
-      } finally {
-        serialConnectToggleEl.disabled = false;
+    serialConnectToggleEl?.addEventListener("click", () => {
+      if (serialConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial("auto");
       }
     });
+
+    webusbConnectToggleEl?.addEventListener("click", () => {
+      if (serialConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial("webusb");
+      }
+    });
+
 
     document.querySelector("#serial-transaction")?.addEventListener("click", async () => {
       const txHex = document.querySelector("#tx-hex")?.value || "";
@@ -2416,6 +2674,26 @@ export function createUiController() {
     document.querySelector("#debug-clear").addEventListener("click", () => {
       debugOutputEl.value = "";
       lastErrorSummary = "";
+    });
+
+    document.querySelector("#debug-copy")?.addEventListener("click", async () => {
+      const text = debugOutputEl.value || "";
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          // Fallback for browsers/contexts without the async clipboard API.
+          debugOutputEl.focus();
+          debugOutputEl.select();
+          document.execCommand("copy");
+        }
+        setStatus("Debug log copied to clipboard.");
+      } catch {
+        // Last resort: select the text so the user can copy manually.
+        debugOutputEl.focus();
+        debugOutputEl.select();
+        setStatus("Could not copy automatically; log text is selected — copy it manually.");
+      }
     });
 
     reportIssueEl?.addEventListener("click", () => {
@@ -2439,6 +2717,7 @@ export function createUiController() {
       try {
         trackRadioEvent("radio_download", selectedRadio);
         setStatus(`Downloading from ${makeModelLabel(selectedRadio)}...`);
+        beginCloneProgress(`Downloading from ${makeModelLabel(selectedRadio)}...`);
         const result = await requireRuntimeApi().downloadSelectedRadio({
           module: selectedRadio.module,
           className: selectedRadio.className,
@@ -2468,6 +2747,8 @@ export function createUiController() {
       } catch (error) {
         reportActionError("Download", error);
         logSerial(`ERROR ${errorSummary(error)}`);
+      } finally {
+        endCloneProgress();
       }
     });
 
@@ -2490,6 +2771,7 @@ export function createUiController() {
           return;
         }
         setStatus(`Uploading to ${makeModelLabel(selectedRadio)}...`);
+        beginCloneProgress(`Uploading to ${makeModelLabel(selectedRadio)}...`);
         const uploadResult = await requireRuntimeApi().uploadSelectedRadio({
           module: selectedRadio.module,
           className: selectedRadio.className,
@@ -2503,6 +2785,8 @@ export function createUiController() {
       } catch (error) {
         reportActionError("Upload", error);
         logSerial(`ERROR ${errorSummary(error)}`);
+      } finally {
+        endCloneProgress();
       }
     });
   }
@@ -2540,9 +2824,11 @@ export function createUiController() {
 
   return {
     setRuntimeApi,
+    setSerialController,
     setStatus,
     logSerial,
     logDebug,
+    updateCloneProgress,
     init,
     selectedRowsForOperations,
     onRuntimeCrash(message) {

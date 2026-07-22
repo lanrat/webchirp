@@ -1,5 +1,24 @@
 # Release Notes
 
+## 2026-07-22
+- Android now offers both connect paths when its native Web Serial is available (arriving for Bluetooth RFCOMM serial ports): "Connect via WebSerial" for Bluetooth serial ports and "Connect via WebUSB" for wired USB adapters, which Android's native Web Serial cannot drive. While connected, the two buttons collapse into a single Disconnect button matching the active transport. Desktop and WebUSB-only browsers keep their single-button behavior, and a serial-log hint explains the split when both paths are offered.
+- Added WebUSB serial support for Android Chrome (#8): native chip drivers for FTDI (`web/js/ftdi-webusb.js`, FT231X/FT232R etc.) and Prolific PL2303 (`web/js/pl2303-webusb.js`, with per-generation chip detection from 01/HX/TA/TB through the HXN family), plus a CDC-ACM fallback via Google's lazily-imported `web-serial-polyfill`. A single WebUSB device chooser dispatches the chosen cable to the right driver, which exposes the Web Serial `SerialPort` surface so `BrowserSerialBridge` works identically over both transports. Hardware-verified on Android Chrome with FTDI and PL2303 cables completing real radio clone downloads; CH340/CP2102 are documented as unsupported.
+- The UI now shows one connect button per platform: native Web Serial on desktop, WebUSB on Android (where `navigator.serial` exists but cannot drive FTDI/PL2303-class programming cables).
+- Fixed a read-path deadlock in the WebUSB drivers: a `ReadableStream` `pull()` that resolved without enqueuing (status-only packet from an idle FTDI chip) was never re-invoked per the Streams spec, wedging all reads. Both drivers now poll inside `pull()` until real payload arrives and recover stalled bulk IN endpoints with `clearHalt`.
+- Added `npm run test:serial` — 22 unit tests covering transport selection/fallback, FTDI baud-divisor vectors and init, status-byte stripping, the read-deadlock regression, PL2303 chip detection and init sequences, DTR/RTS transitions, and chooser dispatch.
+
+## 2026-07-21
+- Radio make/model dropdowns now populate instantly from a prebuilt static catalog (`web/radio-catalog.json`) instead of booting Pyodide and importing every CHIRP driver on first load; live driver enumeration remains as a fallback.
+- Added a `build:catalog` npm script (run automatically by `build:dist`) that regenerates the catalog from the local CHIRP submodule.
+- Added a search box above the make/model dropdowns to filter radios by make or model.
+- Fixed a pre-existing crash (`Duplicate radio driver id`) when selecting a radio: concurrent metadata/settings calls could re-execute a driver module while its lazy import was suspended fetching source. All Pyodide-backed runtime calls now run one at a time through a FIFO queue.
+- The static radio catalog is only used when it was built from the exact CHIRP revision the runtime is pinned to; otherwise the app falls back to live driver enumeration. The pin is now a single shared constant and `build:catalog` fails on a submodule/pin mismatch.
+- Typing in the radio search box no longer triggers a driver load per keystroke; the load is debounced until typing settles, skipped when the selection is unchanged, and stale responses can no longer overwrite a newer selection.
+- Added a clone progress bar for radio download/upload (#10): CHIRP drivers' per-block `status_fn` reports are now forwarded through a new `serial_progress` global to a native `<progress>` bar in the Serial Bridge panel, showing the driver's phase message and a percentage (indeterminate when a driver reports no block counts), hidden when idle. Debug logging drops to one line per phase-message change instead of one per block.
+
+## 2026-07-10
+- Pinned the repo Node version back to 22.11.0 (from 25.2.1). Node 25 broke the `codex` CLI on startup (circular-dependency module warnings, then it failed to launch) whenever run in this directory. Verified the project still builds and passes checks on Node 22: `build:dist`, `test:channels` (8/8), `serialport` native addon load, and `runtime_bridge.py` compile all pass.
+
 ## 2026-07-03
 - Added explicit relative favicon links to the app and About pages. Browsers only auto-discover `/favicon.ico` at the domain root, so deployments served from a sub-path (e.g. GitHub Pages project sites) showed no favicon; the explicit `./favicon.ico` reference works at any mount point.
 
