@@ -103,6 +103,10 @@ export function createUiController() {
   let activeRepeaterQuerySource = "przemienniki";
   let sidebarControlsEnabled = false;
   let serialConnected = false;
+  // Transport of the active connection ("webserial" or "webusb"), used to
+  // collapse the two connect toggles to a single Disconnect button when both
+  // are visible (Android).
+  let serialTransport = "";
 
   const repeaterQuerySources = {
     przemienniki: {
@@ -174,6 +178,7 @@ export function createUiController() {
       if (result?.deviceName) {
         logDebug(`SERIAL DEVICE ${result.deviceName}`);
       }
+      serialTransport = result?.transport || "";
       if (result?.transport) {
         logSerial(`Transport: ${result.transport}`);
       }
@@ -203,6 +208,9 @@ export function createUiController() {
       setStatus("Disconnecting serial...");
       const result = await requireRuntimeApi().serialDisconnect();
       serialConnected = Boolean(result?.connected);
+      if (!serialConnected) {
+        serialTransport = "";
+      }
       setStatus(result.message || "Serial disconnected.");
     } catch (error) {
       reportActionError("Serial disconnect", error);
@@ -671,28 +679,49 @@ export function createUiController() {
     return Boolean(selectedRadio?.isLiveRadio);
   }
 
+  // Android's native Web Serial only reaches Bluetooth RFCOMM serial ports, so
+  // the WebUSB connect path must stay available there for wired USB adapters.
+  function isAndroidPlatform() {
+    return /\bAndroid\b/i.test(navigator.userAgent || "");
+  }
+
   function updateSerialActionState() {
     const liveRadioUnsupported = selectedRadioIsLiveMode();
     const actionsAllowed = sidebarControlsEnabled && !liveRadioUnsupported;
 
     setLiveRadioSupportWarningVisible(liveRadioUnsupported);
 
-    // Exactly one connect control per platform: native Web Serial (desktop)
-    // gets the WebSerial toggle, WebUSB-only browsers (Android Chrome) get the
-    // WebUSB toggle. When neither API exists the WebSerial toggle stays visible
-    // (disabled) alongside the unsupported-browser warning.
+    // Connect controls by platform capability:
+    // - Desktop with native Web Serial: WebSerial toggle only.
+    // - Android with native Web Serial (Bluetooth RFCOMM serial ports): both
+    //   toggles — WebSerial for Bluetooth serial, WebUSB for wired USB
+    //   adapters, which Android's native Web Serial cannot drive.
+    // - WebUSB-only browsers (older Android Chrome): WebUSB toggle only.
+    // - Neither API: the WebSerial toggle stays visible (disabled) alongside
+    //   the unsupported-browser warning.
     const webusbOnly = serialCapability.webusb && !serialCapability.native;
+    let showWebSerialToggle = !webusbOnly;
+    let showWebUsbToggle =
+      serialCapability.webusb && (!serialCapability.native || isAndroidPlatform());
+    // While connected, collapse to a single Disconnect button on the toggle
+    // matching the active transport.
+    if (serialConnected && showWebSerialToggle && showWebUsbToggle) {
+      showWebUsbToggle = serialTransport === "webusb";
+      showWebSerialToggle = !showWebUsbToggle;
+    }
 
     if (serialConnectToggleEl) {
-      serialConnectToggleEl.hidden = webusbOnly;
+      serialConnectToggleEl.hidden = !showWebSerialToggle;
       serialConnectToggleEl.disabled = !actionsAllowed;
       serialConnectToggleEl.title = liveRadioUnsupported
         ? "Live-mode radios are not supported in this UI yet"
-        : "";
+        : (isAndroidPlatform()
+          ? "Connect over native Web Serial, for use with Bluetooth serial ports"
+          : "");
     }
 
     if (webusbConnectToggleEl) {
-      webusbConnectToggleEl.hidden = !webusbOnly;
+      webusbConnectToggleEl.hidden = !showWebUsbToggle;
       webusbConnectToggleEl.disabled = !actionsAllowed;
       webusbConnectToggleEl.title = liveRadioUnsupported
         ? "Live-mode radios are not supported in this UI yet"

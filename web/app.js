@@ -34,4 +34,11 @@ if (serialCapability.webusb && !serialCapability.native) {
     + `WebUSB supports ${WEBUSB_SUPPORTED_ADAPTERS}; `
     + `other vendor chips (${WEBUSB_UNSUPPORTED_ADAPTERS}) are not supported yet.`,
   );
+} else if (serialCapability.webusb && serialCapability.native
+  && /\bAndroid\b/i.test(navigator.userAgent || "")) {
+  ui.logSerial(
+    "Android detected with native Web Serial: use WebSerial for Bluetooth "
+    + "serial ports, or WebUSB for wired USB adapters "
+    + `(${WEBUSB_SUPPORTED_ADAPTERS}).`,
+  );
 }
