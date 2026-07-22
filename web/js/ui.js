@@ -246,11 +246,18 @@ export function createUiController() {
   }
 
   function refreshSerialConnectToggleLabel() {
+    // Mobile has no hover tooltips, so on Android the labels themselves say
+    // what each transport is for.
+    const mobile = isAndroidPlatform();
     if (serialConnectToggleEl) {
-      serialConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect via WebSerial";
+      serialConnectToggleEl.textContent = serialConnected
+        ? "Disconnect"
+        : (mobile ? "Connect via WebSerial (Bluetooth)" : "Connect via WebSerial");
     }
     if (webusbConnectToggleEl) {
-      webusbConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect via WebUSB";
+      webusbConnectToggleEl.textContent = serialConnected
+        ? "Disconnect"
+        : (mobile ? "Connect via WebUSB (wired adapter)" : "Connect via WebUSB");
     }
   }
 
