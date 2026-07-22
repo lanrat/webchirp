@@ -1,3 +1,7 @@
+## 2026-07-22
+
+- GitHub pins a PR's diff base (`base.sha`) to the merge-base computed when the PR was created and never advances it — not when the base branch moves, and not even when the head branch merges in the newer base. PR #8 kept showing RELEASE_NOTES.md +3 and web/about.html +1 (the favicon-subpath changes already merged to master via PR #11) even though the head's file blobs were byte-identical to the current merge-base, and pushing a fresh commit to the head updated `head.sha` but left `base.sha` pinned. The fix that works: retarget the PR's base branch to any other branch and back (`gh pr edit N --base <other>` then `--base master`), which re-records `base.sha` as the current merge-base and drops the phantom files from the diff. `GET /repos/{owner}/{repo}/compare/master...<head>` always computes a fresh merge-base, so it is the reliable way to see a PR's true current diff.
+
 ## 2026-06-23
 
 - First-load latency for the radio make/model dropdowns was dominated by `list_registered_radios()` importing *every* CHIRP driver (191 modules) in Pyodide. Each not-yet-cached import trips the `ChirpCdnFinder` hook, which does one blocking jsDelivr fetch per module file (plus its dependencies) via `_await_js`, so the dropdowns could not appear until ~191 serialized fetch→write→import→exec cycles (on top of Pyodide cold start) completed. The catalog only needs vendor/model/module/class/baud/isLive per radio, none of which requires running the driver in the browser.
