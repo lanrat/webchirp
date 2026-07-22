@@ -225,10 +225,12 @@ export function createUiController() {
   }
 
   function refreshSerialConnectToggleLabel() {
-    if (!serialConnectToggleEl) {
-      return;
+    if (serialConnectToggleEl) {
+      serialConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect via WebSerial";
     }
-    serialConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect";
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect via WebUSB";
+    }
   }
 
   function setCookie(name, value, maxAgeSeconds = 31536000) {
@@ -611,7 +613,14 @@ export function createUiController() {
 
     setLiveRadioSupportWarningVisible(liveRadioUnsupported);
 
+    // Exactly one connect control per platform: native Web Serial (desktop)
+    // gets the WebSerial toggle, WebUSB-only browsers (Android Chrome) get the
+    // WebUSB toggle. When neither API exists the WebSerial toggle stays visible
+    // (disabled) alongside the unsupported-browser warning.
+    const webusbOnly = serialCapability.webusb && !serialCapability.native;
+
     if (serialConnectToggleEl) {
+      serialConnectToggleEl.hidden = webusbOnly;
       serialConnectToggleEl.disabled = !actionsAllowed;
       serialConnectToggleEl.title = liveRadioUnsupported
         ? "Live-mode radios are not supported in this UI yet"
@@ -619,11 +628,11 @@ export function createUiController() {
     }
 
     if (webusbConnectToggleEl) {
-      webusbConnectToggleEl.hidden = !serialCapability.webusb;
-      webusbConnectToggleEl.disabled = !actionsAllowed || serialConnected;
+      webusbConnectToggleEl.hidden = !webusbOnly;
+      webusbConnectToggleEl.disabled = !actionsAllowed;
       webusbConnectToggleEl.title = liveRadioUnsupported
         ? "Live-mode radios are not supported in this UI yet"
-        : "Connect over WebUSB (Android), for use with FTDI FT231X/FT232R or Prolific PL2303";
+        : "Connect over WebUSB, for use with FTDI FT231X/FT232R or Prolific PL2303";
     }
 
 
@@ -2176,7 +2185,11 @@ export function createUiController() {
     });
 
     webusbConnectToggleEl?.addEventListener("click", () => {
-      connectSerial("webusb");
+      if (serialConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial("webusb");
+      }
     });
 
 

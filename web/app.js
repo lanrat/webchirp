@@ -27,10 +27,10 @@ ui.setSerialController({
   setPreferredTransport: (transport) => serialBridge.setPreferredTransport(transport),
 });
 ui.init(serialCapability.supported);
-if (serialCapability.webusb) {
+if (serialCapability.webusb && !serialCapability.native) {
   ui.logSerial(
-    "If 'Connect' does not find your USB-serial adapter (e.g. an FTDI or PL2303 cable on Android), "
-    + `use 'Connect via WebUSB'. WebUSB supports ${WEBUSB_SUPPORTED_ADAPTERS}; `
+    "This browser has no native Web Serial, so serial connections use WebUSB. "
+    + `WebUSB supports ${WEBUSB_SUPPORTED_ADAPTERS}; `
     + `other vendor chips (${WEBUSB_UNSUPPORTED_ADAPTERS}) are not supported yet.`,
   );
 }
