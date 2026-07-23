@@ -496,16 +496,21 @@ button:not(:disabled):hover {
   position: relative;
 }
 
-/* Uniform size for all toolbar buttons (+, -, up, down, Actions). */
+/* Uniform height for all toolbar buttons (+, -, up, down, Actions). */
 .channel-toolbar > button,
 #channel-menu-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 5rem;
   height: 2.3rem;
   padding: 0.3rem 0.5rem;
   line-height: 1;
+}
+
+/* The icon buttons are squares matching the toolbar height. */
+.channel-toolbar > button {
+  width: 2.3rem;
+  padding: 0;
 }
 
 .mem-table-scroll {
@@ -1055,6 +1060,11 @@ button:not(:disabled):hover {
   .modal-actions button,
   .debug-actions button {
     min-height: 2.75rem;
+  }
+
+  /* Keep the icon buttons square at the larger touch-target height. */
+  .channel-toolbar > button {
+    min-width: 2.75rem;
   }
 
   /* The actions popup is fixed-width on desktop; keep it on-screen on phones. */
