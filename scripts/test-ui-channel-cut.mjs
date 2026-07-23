@@ -222,3 +222,49 @@ test("cut deletes the rows captured at copy time, not the selection at write com
   // Alpha (the row that was serialized) is gone; Charlie survives.
   assert.deepEqual(tableNames(document), ["Bravo", "Charlie"]);
 });
+
+// Regression: radios with has_tuning_step=False (e.g. Baofeng UV-5R) mark
+// TStep read-only; paste must still restore the copied value instead of
+// silently resetting it to the first enum option.
+test("paste preserves read-only column values and matches unpadded numeric enums", async () => {
+  const { document, navigator } = installFakeDom();
+  const { createUiController } = await import("../web/js/ui.js");
+  const ui = createUiController();
+
+  const headers = ["Location", "Name", "Frequency", "TStep"];
+  const columns = {
+    TStep: {
+      kind: "enum",
+      editable: false,
+      options: ["2.50", "5.00", "6.25", "10.00", "12.50", "25.00"],
+    },
+  };
+  ui.setRuntimeApi({
+    listRadios: async () => ({
+      radios: [
+        { vendor: "Acme", model: "One", module: "one", className: "OneRadio", key: "one:OneRadio", isLiveRadio: false },
+      ],
+    }),
+    getRuntimeInfo: async () => ({ chirpRevision: "test-revision" }),
+    getRadioMetadata: async () => ({ headers, columns }),
+    getRadioSettings: async () => ({ supported: false, available: false, requiresImage: false, message: "", groups: [] }),
+    parseCsv: async () => ({ headers, rows: [], errors: [] }),
+  });
+
+  await ui.init(true);
+
+  // Header-mapped TSV as produced by Copy (TStep "5.00") plus a
+  // spreadsheet-style unpadded value ("12.5") that must match "12.50".
+  const tsv =
+    "Name\tFrequency\tTStep\n" +
+    "Alpha\t146.520000\t5.00\n" +
+    "Bravo\t146.940000\t12.5\n";
+  navigator.clipboard = { readText: async () => tsv };
+  document.querySelector("#channel-paste").dispatchEvent({ type: "click" });
+  await flushMicrotasks();
+
+  const tbody = document.querySelector("#mem-table tbody");
+  const tstepValues = tbody.children.map((tr) => tr.children[3]?.children[0]?.value ?? "");
+  assert.deepEqual(tableNames(document), ["Alpha", "Bravo"]);
+  assert.deepEqual(tstepValues, ["5.00", "12.50"]);
+});

@@ -1053,9 +1053,12 @@ export function createUiController() {
   }
 
   // Coerce and constrain edited cell values according to CHIRP column metadata.
-  function normalizeValue(column, value, meta, previous) {
+  // allowReadOnly lets programmatic row builders (paste, repeater imports) fill
+  // columns the grid renders read-only (e.g. TStep on radios with
+  // has_tuning_step=False); kind/options validation still applies.
+  function normalizeValue(column, value, meta, previous, { allowReadOnly = false } = {}) {
     let v = String(value ?? "");
-    if (!meta || meta.editable === false) {
+    if (!meta || (meta.editable === false && !allowReadOnly)) {
       return String(previous ?? v);
     }
 
@@ -1103,6 +1106,16 @@ export function createUiController() {
     if (meta.kind === "enum") {
       const options = Array.isArray(meta.options) ? meta.options.map(String) : [];
       if (options.length > 0 && !options.includes(v)) {
+        // Numeric enums (TStep "5.00", rToneFreq "88.5", DtcsCode "023") may
+        // arrive from spreadsheets without CHIRP's zero padding ("5", "23");
+        // match them by numeric value before giving up.
+        const numeric = Number.parseFloat(v);
+        const numericMatch = Number.isFinite(numeric)
+          ? options.find((option) => Number.parseFloat(option) === numeric)
+          : undefined;
+        if (numericMatch !== undefined) {
+          return numericMatch;
+        }
         return String(previous ?? options[0] ?? "");
       }
       return v;
@@ -1430,7 +1443,7 @@ export function createUiController() {
       return;
     }
     const meta = radioMetadata.columns?.[column] || {};
-    row[column] = normalizeValue(column, value, meta, row[column]);
+    row[column] = normalizeValue(column, value, meta, row[column], { allowReadOnly: true });
   }
 
   function findEnumOption(column, choices, caseInsensitive = false) {
