@@ -102,13 +102,20 @@
               radio to use Connect, Download Radio, and Upload Radio.
             </p>
             <label for="radio-search">Search radios</label>
-            <input
-              id="radio-search"
-              type="search"
-              placeholder="Filter by make or model…"
-              autocomplete="off"
-              disabled
-            />
+            <div class="radio-search-wrap">
+              <input
+                id="radio-search"
+                type="search"
+                placeholder="Type a make or model…"
+                autocomplete="off"
+                role="combobox"
+                aria-expanded="false"
+                aria-controls="radio-search-results"
+                aria-autocomplete="list"
+                disabled
+              />
+              <ul id="radio-search-results" class="radio-search-results" role="listbox" hidden></ul>
+            </div>
             <label for="radio-make">Radio make</label>
             <select id="radio-make" disabled></select>
             <label for="radio-model">Radio model</label>

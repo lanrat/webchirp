@@ -392,6 +392,58 @@ button:not(:disabled):hover {
   color: var(--text);
 }
 
+.radio-search-wrap {
+  position: relative;
+}
+
+.radio-search-results {
+  position: absolute;
+  top: calc(100% - 0.45rem);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  max-height: 16rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.2rem 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.radio-search-results[hidden] {
+  display: none;
+}
+
+.radio-search-results li {
+  padding: 0.32rem 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.radio-search-results li:hover,
+.radio-search-results li.is-active {
+  background: var(--selected-bg);
+}
+
+.radio-search-results li.radio-search-empty,
+.radio-search-results li.radio-search-more {
+  color: var(--muted);
+  cursor: default;
+  font-style: italic;
+}
+
+.radio-search-results li.radio-search-empty:hover,
+.radio-search-results li.radio-search-more:hover {
+  background: transparent;
+}
+
 .left-panel button:disabled,
 .left-panel input:disabled,
 .left-panel select:disabled {

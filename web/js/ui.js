@@ -22,7 +22,7 @@ const DEFAULT_SAMPLE_CSV = `Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq
 const ISSUE_TEMPLATE_NAME = "radio_bug_report.yml";
 const ISSUE_NEW_URL = "https://github.com/jasiek/webchirp/issues/new";
 const LAST_RADIO_COOKIE = "webchirp_last_radio";
-const SEARCH_RELOAD_DEBOUNCE_MS = 350;
+const RADIO_SEARCH_MAX_RESULTS = 50;
 
 function sanitizeFileNamePart(text) {
   return String(text || "")
@@ -66,6 +66,7 @@ export function createUiController() {
   const serialSupportWarningEl = document.querySelector("#webserial-support-warning");
   const liveRadioSupportWarningEl = document.querySelector("#live-radio-support-warning");
   const radioSearchEl = document.querySelector("#radio-search");
+  const radioSearchResultsEl = document.querySelector("#radio-search-results");
   const radioMakeEl = document.querySelector("#radio-make");
   const radioModelEl = document.querySelector("#radio-model");
   const serialConnectToggleEl = document.querySelector("#serial-connect-toggle");
@@ -110,7 +111,8 @@ export function createUiController() {
   let currentHeaders = [];
   let currentRows = [];
   let radioCatalog = [];
-  let radioFilterText = "";
+  let radioSearchMatches = [];
+  let radioSearchActiveIndex = -1;
   let selectedRadio = null;
   let radioMetadata = { headers: [], columns: {} };
   let radioSettingsState = { supported: false, available: false, requiresImage: false, message: "", groups: [] };
@@ -119,7 +121,6 @@ export function createUiController() {
   // has already navigated away from.
   let radioLoadSequence = 0;
   let lastLoadedRadioKey = "";
-  let searchReloadTimer = null;
   let runtimeInfo = { chirpRevision: "" };
   let lastUsbVendorId = "";
   let lastUsbProductId = "";
@@ -854,21 +855,121 @@ export function createUiController() {
     return tokens.every((token) => haystack.includes(token));
   }
 
-  // The catalog entries currently visible given the search filter.
-  function visibleCatalog() {
-    const tokens = radioFilterText.toLowerCase().split(/\s+/).filter(Boolean);
+  // Catalog entries matching a free-text search query.
+  function matchingRadios(query) {
+    const tokens = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) {
-      return radioCatalog;
+      return [];
     }
     return radioCatalog.filter((radio) => radioMatchesFilter(radio, tokens));
   }
 
-  // Clear the search filter so programmatic selections see the full catalog.
+  // "<Make> <Model>" label for a search suggestion; the driver class is added
+  // when several catalog entries share the same vendor+model text.
+  function radioSearchLabel(radio, hasDuplicateLabel) {
+    const base = makeModelLabel(radio);
+    const label = radio.isLiveRadio ? `⚡ ${base}` : base;
+    return hasDuplicateLabel ? `${label} (${radio.className})` : label;
+  }
+
+  function hideRadioSearchResults() {
+    radioSearchMatches = [];
+    radioSearchActiveIndex = -1;
+    if (radioSearchResultsEl) {
+      radioSearchResultsEl.hidden = true;
+      radioSearchResultsEl.innerHTML = "";
+    }
+    radioSearchEl?.setAttribute("aria-expanded", "false");
+  }
+
+  // Clear the search box and close its suggestion list (programmatic selections).
   function clearRadioFilter() {
-    radioFilterText = "";
     if (radioSearchEl) {
       radioSearchEl.value = "";
     }
+    hideRadioSearchResults();
+  }
+
+  // Render the autocomplete dropdown for the current search box contents.
+  function renderRadioSearchResults() {
+    if (!radioSearchResultsEl) {
+      return;
+    }
+    const query = String(radioSearchEl?.value || "").trim();
+    if (!query) {
+      hideRadioSearchResults();
+      return;
+    }
+    const matches = matchingRadios(query);
+    radioSearchMatches = matches.slice(0, RADIO_SEARCH_MAX_RESULTS);
+    radioSearchActiveIndex = radioSearchMatches.length > 0 ? 0 : -1;
+    radioSearchResultsEl.innerHTML = "";
+
+    if (matches.length === 0) {
+      const li = document.createElement("li");
+      li.classList.add("radio-search-empty");
+      li.textContent = "No matching radios";
+      radioSearchResultsEl.appendChild(li);
+    } else {
+      const labelCounts = new Map();
+      for (const radio of radioSearchMatches) {
+        const label = makeModelLabel(radio);
+        labelCounts.set(label, (labelCounts.get(label) || 0) + 1);
+      }
+      radioSearchMatches.forEach((radio, index) => {
+        const li = document.createElement("li");
+        li.setAttribute("role", "option");
+        li.dataset.index = String(index);
+        const hasDuplicateLabel = (labelCounts.get(makeModelLabel(radio)) || 0) > 1;
+        li.textContent = radioSearchLabel(radio, hasDuplicateLabel);
+        if (index === radioSearchActiveIndex) {
+          li.classList.add("is-active");
+        }
+        radioSearchResultsEl.appendChild(li);
+      });
+      if (matches.length > radioSearchMatches.length) {
+        const li = document.createElement("li");
+        li.classList.add("radio-search-more");
+        li.textContent = `${matches.length - radioSearchMatches.length} more — keep typing to narrow down`;
+        radioSearchResultsEl.appendChild(li);
+      }
+    }
+
+    radioSearchResultsEl.hidden = false;
+    radioSearchEl?.setAttribute("aria-expanded", "true");
+  }
+
+  // Move the keyboard highlight in the suggestion list by delta and keep it in view.
+  function moveRadioSearchActive(delta) {
+    if (radioSearchMatches.length === 0) {
+      return;
+    }
+    const count = radioSearchMatches.length;
+    radioSearchActiveIndex = (radioSearchActiveIndex + delta + count) % count;
+    const items = radioSearchResultsEl?.querySelectorAll("li[role='option']") || [];
+    items.forEach((li, index) => {
+      li.classList.toggle("is-active", index === radioSearchActiveIndex);
+    });
+    items[radioSearchActiveIndex]?.scrollIntoView({ block: "nearest" });
+  }
+
+  // Apply a suggestion: sync the make/model dropdowns and load the radio.
+  function applyRadioSearchSelection(radio) {
+    if (!radio) {
+      return;
+    }
+    if (radioSearchEl) {
+      radioSearchEl.value = makeModelLabel(radio);
+    }
+    hideRadioSearchResults();
+    radioMakeEl.value = radio.vendor;
+    refreshModelOptions();
+    radioModelEl.value = radio.key;
+    selectedRadio = radio;
+    logDebug(
+      `RADIO SELECT ${makeModelLabel(radio)} (${radio.module}.${radio.className})`,
+    );
+    reloadForSelectedRadio();
   }
 
   // Shared side effects after the selected radio changes via make/model/search.
@@ -932,7 +1033,7 @@ export function createUiController() {
   // Populate model dropdown for selected vendor and refresh selection state.
   function refreshModelOptions() {
     const vendor = radioMakeEl.value;
-    const models = visibleCatalog().filter((r) => r.vendor === vendor);
+    const models = radioCatalog.filter((r) => r.vendor === vendor);
     const modelCounts = new Map();
     for (const radio of models) {
       modelCounts.set(radio.model, (modelCounts.get(radio.model) || 0) + 1);
@@ -998,11 +1099,11 @@ export function createUiController() {
     return true;
   }
 
-  // Populate make dropdown from the (optionally filtered) catalog and initialize
-  // model options, preserving the current vendor when it is still visible.
+  // Populate make dropdown from the catalog and initialize model options,
+  // preserving the current vendor when it is still present.
   function refreshMakeOptions() {
     const previousVendor = radioMakeEl.value;
-    const vendors = uniqueVendors(visibleCatalog());
+    const vendors = uniqueVendors(radioCatalog);
     radioMakeEl.innerHTML = "";
 
     if (vendors.length === 0) {
@@ -2626,21 +2727,53 @@ export function createUiController() {
       }
     });
 
-    // Filtering only narrows the dropdowns; defer the (Pyodide-backed)
-    // metadata/settings load until typing settles, and skip it entirely when
-    // the effective selection did not change.
+    // Typing opens an autocomplete list of "<Make> <Model>" suggestions; the
+    // (Pyodide-backed) metadata/settings load only happens once the user picks
+    // a suggestion via keyboard or mouse.
     radioSearchEl?.addEventListener("input", () => {
-      radioFilterText = String(radioSearchEl.value || "").trim();
-      const previousKey = selectedRadio?.key || "";
-      refreshMakeOptions();
-      if ((selectedRadio?.key || "") === previousKey) {
+      renderRadioSearchResults();
+    });
+
+    radioSearchEl?.addEventListener("focus", () => {
+      renderRadioSearchResults();
+    });
+
+    radioSearchEl?.addEventListener("keydown", (event) => {
+      const isOpen = radioSearchResultsEl && !radioSearchResultsEl.hidden;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (!isOpen) {
+          renderRadioSearchResults();
+          return;
+        }
+        moveRadioSearchActive(event.key === "ArrowDown" ? 1 : -1);
+      } else if (event.key === "Enter") {
+        if (isOpen && radioSearchActiveIndex >= 0) {
+          event.preventDefault();
+          applyRadioSearchSelection(radioSearchMatches[radioSearchActiveIndex]);
+        }
+      } else if (event.key === "Escape") {
+        if (isOpen) {
+          event.stopPropagation();
+          hideRadioSearchResults();
+        }
+      }
+    });
+
+    radioSearchEl?.addEventListener("blur", () => {
+      // Delay so a click on a suggestion (which blurs the input) still lands.
+      setTimeout(() => hideRadioSearchResults(), 150);
+    });
+
+    radioSearchResultsEl?.addEventListener("mousedown", (event) => {
+      // Prevent the input blur so the click handler below sees the list open.
+      event.preventDefault();
+      const li = event.target.closest("li[role='option']");
+      if (!li) {
         return;
       }
-      clearTimeout(searchReloadTimer);
-      searchReloadTimer = setTimeout(() => {
-        searchReloadTimer = null;
-        reloadForSelectedRadio();
-      }, SEARCH_RELOAD_DEBOUNCE_MS);
+      const index = Number(li.dataset.index);
+      applyRadioSearchSelection(radioSearchMatches[index]);
     });
 
     radioMakeEl.addEventListener("change", () => {
