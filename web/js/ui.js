@@ -24,6 +24,29 @@ const ISSUE_NEW_URL = "https://github.com/jasiek/webchirp/issues/new";
 const LAST_RADIO_COOKIE = "webchirp_last_radio";
 const SEARCH_RELOAD_DEBOUNCE_MS = 350;
 
+function sanitizeFileNamePart(text) {
+  return String(text || "")
+    .trim()
+    .replace(/[^\w.-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "radio";
+}
+
+function dateStampForFileName(date) {
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const y = date.getFullYear();
+  const m = pad2(date.getMonth() + 1);
+  const d = pad2(date.getDate());
+  return `${y}${m}${d}`;
+}
+
+// Derive an export file name like Baofeng_BF-888_20231218.img
+// (<brand>_<model>_<date>.<format>).
+export function buildExportFileName(vendor, model, extension, date = new Date()) {
+  const vendorPart = sanitizeFileNamePart(vendor);
+  const modelPart = sanitizeFileNamePart(model);
+  return `${vendorPart}_${modelPart}_${dateStampForFileName(date)}.${extension}`;
+}
+
 // Create and manage all DOM/UI state and user interaction behavior.
 export function createUiController() {
   const tableHead = document.querySelector("#mem-table thead");
@@ -793,30 +816,6 @@ export function createUiController() {
   // Build a short user-facing label for a selected radio catalog entry.
   function makeModelLabel(radio) {
     return `${radio.vendor} ${radio.model}`;
-  }
-
-  function sanitizeFileNamePart(text) {
-    return String(text || "")
-      .trim()
-      .replace(/[^\w.-]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "radio";
-  }
-
-  function nowStampForFileName() {
-    const now = new Date();
-    const pad2 = (n) => String(n).padStart(2, "0");
-    const y = now.getFullYear();
-    const m = pad2(now.getMonth() + 1);
-    const d = pad2(now.getDate());
-    return `${y}${m}${d}`;
-  }
-
-  // Derive an export file name like Baofeng_BF-888_20231218.img
-  // (<brand>_<model>_<date>.<format>).
-  function buildExportFileName(vendor, model, extension) {
-    const vendorPart = sanitizeFileNamePart(vendor);
-    const modelPart = sanitizeFileNamePart(model);
-    return `${vendorPart}_${modelPart}_${nowStampForFileName()}.${extension}`;
   }
 
   function base64ToBytes(base64) {
