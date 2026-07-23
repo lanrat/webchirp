@@ -1,5 +1,6 @@
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.mjs";
 import { createCallQueue } from "./call-queue.mjs";
+import { findCatalogRadioForImageMetadata } from "./image-metadata.mjs";
 import {
   createBrowserCdnPythonSource,
   DEFAULT_CHIRP_REVISION,
@@ -235,6 +236,23 @@ async function handleExportImage(payload = {}) {
 async function handleLoadImage(payload = {}) {
   await requirePyodide();
   pyodide.globals.set("_image_b64", payload.imageBase64 || "");
+  // CHIRP image detection only searches drivers that are already imported, so
+  // read the metadata trailer first and import the matching driver module.
+  const metadata = await runPythonJson(
+    "json.dumps(read_image_metadata_base64(_image_b64))",
+  );
+  if (metadata?.hasMetadata) {
+    const radios = await loadRadioCatalog();
+    const match = findCatalogRadioForImageMetadata(radios, metadata);
+    if (match) {
+      await ensureSelectedRadioModules(match.module);
+    } else if (debugLog) {
+      debugLog(
+        `IMAGE METADATA no catalog match for ${metadata.vendor} ${metadata.model} `
+        + `(class ${metadata.rclass || "unknown"})`,
+      );
+    }
+  }
   return runPythonJson("json.dumps(load_image_base64(_image_b64))");
 }
 
