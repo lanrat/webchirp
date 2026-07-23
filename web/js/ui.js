@@ -808,16 +808,15 @@ export function createUiController() {
     const y = now.getFullYear();
     const m = pad2(now.getMonth() + 1);
     const d = pad2(now.getDate());
-    const hh = pad2(now.getHours());
-    const mm = pad2(now.getMinutes());
-    const ss = pad2(now.getSeconds());
-    return `${y}${m}${d}_${hh}${mm}${ss}`;
+    return `${y}${m}${d}`;
   }
 
-  function buildBinaryCodeplugFileName(vendor, model) {
+  // Derive an export file name like Baofeng_BF-888_20231218.img
+  // (<brand>_<model>_<date>.<format>).
+  function buildExportFileName(vendor, model, extension) {
     const vendorPart = sanitizeFileNamePart(vendor);
     const modelPart = sanitizeFileNamePart(model);
-    return `${vendorPart}_${modelPart}_${nowStampForFileName()}.img`;
+    return `${vendorPart}_${modelPart}_${nowStampForFileName()}.${extension}`;
   }
 
   function base64ToBytes(base64) {
@@ -2300,8 +2299,13 @@ export function createUiController() {
       module: selectedRadio?.module || "",
       className: selectedRadio?.className || "",
     });
-    downloadText("webchirp-export.csv", csvText);
-    setStatus("Exported webchirp-export.csv");
+    const fileName = buildExportFileName(
+      selectedRadio?.vendor || "webchirp",
+      selectedRadio?.model || "export",
+      "csv",
+    );
+    downloadText(fileName, csvText);
+    setStatus(`Exported ${fileName}`);
   }
 
   async function exportBinaryCodeplug() {
@@ -2319,9 +2323,10 @@ export function createUiController() {
     radioSettingsState.groups = cloneSettingsGroups(result.settings || radioSettingsState.groups);
     renderSettingsPanel();
     const bytes = base64ToBytes(result.imageBase64 || "");
-    const fileName = buildBinaryCodeplugFileName(
+    const fileName = buildExportFileName(
       result.vendor || selectedRadio.vendor,
       result.model || selectedRadio.model,
+      "img",
     );
     downloadBytes(fileName, bytes);
     setStatus(`Exported ${fileName}`);
