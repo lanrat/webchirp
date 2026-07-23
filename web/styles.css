@@ -496,6 +496,23 @@ button:not(:disabled):hover {
   position: relative;
 }
 
+/* Uniform height for all toolbar buttons (+, -, up, down, Actions). */
+.channel-toolbar > button,
+#channel-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.3rem;
+  padding: 0.3rem 0.5rem;
+  line-height: 1;
+}
+
+/* The icon buttons are squares matching the toolbar height. */
+.channel-toolbar > button {
+  width: 2.3rem;
+  padding: 0;
+}
+
 .mem-table-scroll {
   min-height: 0;
   overflow: auto;
@@ -703,6 +720,12 @@ button:not(:disabled):hover {
   text-align: left;
 }
 
+.channel-menu-popup .channel-menu-separator {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.25rem 0.2rem;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -879,6 +902,16 @@ button:not(:disabled):hover {
   font-size: 0.85rem;
 }
 
+/* Read-only columns for the selected radio: grey text (cells and header)
+   instead of the browser's default disabled rendering, with a title tooltip
+   set in createCellEditor/renderTable. */
+#mem-table td .readonly-cell,
+#mem-table th.readonly-cell {
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+  opacity: 1;
+}
+
 #mem-table .channel-location-button {
   width: 100%;
   border: none;
@@ -1032,10 +1065,16 @@ button:not(:disabled):hover {
   .left-panel select,
   .serial-actions button,
   .channel-toolbar > button,
+  #channel-menu-toggle,
   .channel-menu-popup button,
   .modal-actions button,
   .debug-actions button {
     min-height: 2.75rem;
+  }
+
+  /* Keep the icon buttons square at the larger touch-target height. */
+  .channel-toolbar > button {
+    min-width: 2.75rem;
   }
 
   /* The actions popup is fixed-width on desktop; keep it on-screen on phones. */

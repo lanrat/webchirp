@@ -156,6 +156,8 @@
             <div class="channel-toolbar">
               <button id="channel-insert" type="button" title="Insert new channel" aria-label="Insert new channel">➕</button>
               <button id="channel-remove" type="button" title="Remove selected channels" aria-label="Remove selected channels">➖</button>
+              <button id="channel-move-up" type="button" title="Move selected channels up (Alt+ArrowUp)" aria-label="Move selected channels up">⬆️</button>
+              <button id="channel-move-down" type="button" title="Move selected channels down (Alt+ArrowDown)" aria-label="Move selected channels down">⬇️</button>
               <div class="channel-menu">
                 <button
                   id="channel-menu-toggle"
@@ -168,6 +170,16 @@
                   Actions
                 </button>
                 <div id="channel-menu-popup" class="channel-menu-popup hidden" role="menu">
+                  <button id="channel-copy" type="button" role="menuitem">
+                    📋 Copy selected channels
+                  </button>
+                  <button id="channel-cut" type="button" role="menuitem">
+                    ✂️ Cut selected channels
+                  </button>
+                  <button id="channel-paste" type="button" role="menuitem">
+                    📥 Paste channels
+                  </button>
+                  <hr class="channel-menu-separator" />
                   <button id="channel-add-gmrs" type="button" role="menuitem">
                     🇺🇸 Add GMRS channels
                   </button>
