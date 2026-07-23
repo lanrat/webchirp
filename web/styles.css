@@ -902,6 +902,14 @@ button:not(:disabled):hover {
   font-size: 0.85rem;
 }
 
+/* Read-only columns for the selected radio: grey text instead of the browser's
+   default disabled rendering, with a title tooltip set in createCellEditor. */
+#mem-table td .readonly-cell {
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+  opacity: 1;
+}
+
 #mem-table .channel-location-button {
   width: 100%;
   border: none;

@@ -1772,6 +1772,16 @@ export function createUiController() {
     const meta = radioMetadata.columns?.[column] || {};
     const current = String(row[column] ?? "");
     const readOnly = column === "Location" || meta.editable === false;
+
+    // Grey out read-only cells and explain why; Location is excluded because
+    // its button is the row-selection handle, not a disabled editor.
+    function markReadOnly(editor) {
+      if (readOnly && column !== "Location") {
+        editor.classList.add("readonly-cell");
+        editor.title = `${column} is read-only for this radio.`;
+      }
+      return editor;
+    }
     if (column === "Location") {
       const button = document.createElement("button");
       button.type = "button";
@@ -1803,7 +1813,7 @@ export function createUiController() {
         currentRows[rowIdx][column] = next;
         select.value = next;
       });
-      return select;
+      return markReadOnly(select);
     }
 
     const input = document.createElement("input");
@@ -1823,7 +1833,7 @@ export function createUiController() {
       currentRows[rowIdx][column] = next;
       input.value = next;
     });
-    return input;
+    return markReadOnly(input);
   }
 
   // Render the editable channel table using current rows and metadata rules.
