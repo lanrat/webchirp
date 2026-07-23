@@ -1132,3 +1132,21 @@ button:not(:disabled):hover {
     flex: 1 1 100%;
   }
 }
+
+/* Custom tooltip bubble (web/js/tooltip.js): replaces native title tooltips
+   so every tooltip appears after the same 400ms delay. Sits above modals. */
+.app-tooltip {
+  position: fixed;
+  z-index: 100;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  white-space: pre-line;
+}

@@ -1,8 +1,10 @@
 import { BrowserSerialBridge, createSerialRpcHandler } from "./js/serial.js";
 import { createRuntimeRpcClient } from "./js/runtime-rpc.js";
 import { createUiController } from "./js/ui.js";
+import { installTooltips } from "./js/tooltip.js";
 import { WEBUSB_SUPPORTED_ADAPTERS, WEBUSB_UNSUPPORTED_ADAPTERS } from "./js/webusb-serial.js";
 
+installTooltips();
 const ui = createUiController();
 const serialBridge = new BrowserSerialBridge();
 const serialRpcHandler = createSerialRpcHandler({
