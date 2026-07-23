@@ -4,7 +4,7 @@ Prototype for running parts of [CHIRP](https://github.com/kk7ds/chirp) in the br
 
 # This is live and running on [codeplug.org](https://codeplug.org)
 
-![](images/screenshot-2026-02-21.png)
+![](images/screenshot.png)
 
 ## What is implemented
 
