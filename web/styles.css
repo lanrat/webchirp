@@ -496,6 +496,18 @@ button:not(:disabled):hover {
   position: relative;
 }
 
+/* Uniform size for all toolbar buttons (+, -, up, down, Actions). */
+.channel-toolbar > button,
+#channel-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 5rem;
+  height: 2.3rem;
+  padding: 0.3rem 0.5rem;
+  line-height: 1;
+}
+
 .mem-table-scroll {
   min-height: 0;
   overflow: auto;
@@ -1038,6 +1050,7 @@ button:not(:disabled):hover {
   .left-panel select,
   .serial-actions button,
   .channel-toolbar > button,
+  #channel-menu-toggle,
   .channel-menu-popup button,
   .modal-actions button,
   .debug-actions button {
