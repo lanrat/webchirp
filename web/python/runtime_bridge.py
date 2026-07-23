@@ -959,6 +959,30 @@ def export_image_base64(module_name: str, class_name: str, rows, settings_groups
     }
 
 
+def read_image_metadata_base64(image_b64: str):
+    """Parse the CHIRP metadata trailer from a .img payload without importing drivers."""
+    try:
+        raw_image = base64.b64decode(str(image_b64 or ""), validate=True)
+    except Exception as exc:
+        raise RuntimeUnsupportedError("Invalid image base64 payload") from exc
+
+    _, metadata = chirp_common.CloneModeRadio._strip_metadata(raw_image)
+    if not metadata:
+        return {"hasMetadata": False}
+
+    vendor = str(metadata.get("vendor", "") or "")
+    model = str(metadata.get("model", "") or "")
+    vendor, model = directory.MODEL_COMPAT.get((vendor, model), (vendor, model))
+    variant = metadata.get("variant")
+    return {
+        "hasMetadata": True,
+        "rclass": str(metadata.get("rclass", "") or ""),
+        "vendor": vendor,
+        "model": model,
+        "variant": "" if variant is None else str(variant),
+    }
+
+
 def load_image_base64(image_b64: str):
     """Load a CHIRP .img payload, detect driver, and return rows + radio identity."""
     try:

@@ -24,6 +24,29 @@ const ISSUE_NEW_URL = "https://github.com/jasiek/webchirp/issues/new";
 const LAST_RADIO_COOKIE = "webchirp_last_radio";
 const SEARCH_RELOAD_DEBOUNCE_MS = 350;
 
+function sanitizeFileNamePart(text) {
+  return String(text || "")
+    .trim()
+    .replace(/[^\w.-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "radio";
+}
+
+function dateStampForFileName(date) {
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const y = date.getFullYear();
+  const m = pad2(date.getMonth() + 1);
+  const d = pad2(date.getDate());
+  return `${y}${m}${d}`;
+}
+
+// Derive an export file name like Baofeng_BF-888_20231218.img
+// (<brand>_<model>_<date>.<format>).
+export function buildExportFileName(vendor, model, extension, date = new Date()) {
+  const vendorPart = sanitizeFileNamePart(vendor);
+  const modelPart = sanitizeFileNamePart(model);
+  return `${vendorPart}_${modelPart}_${dateStampForFileName(date)}.${extension}`;
+}
+
 // Create and manage all DOM/UI state and user interaction behavior.
 export function createUiController() {
   const tableHead = document.querySelector("#mem-table thead");
@@ -793,31 +816,6 @@ export function createUiController() {
   // Build a short user-facing label for a selected radio catalog entry.
   function makeModelLabel(radio) {
     return `${radio.vendor} ${radio.model}`;
-  }
-
-  function sanitizeFileNamePart(text) {
-    return String(text || "")
-      .trim()
-      .replace(/[^\w.-]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "radio";
-  }
-
-  function nowStampForFileName() {
-    const now = new Date();
-    const pad2 = (n) => String(n).padStart(2, "0");
-    const y = now.getFullYear();
-    const m = pad2(now.getMonth() + 1);
-    const d = pad2(now.getDate());
-    const hh = pad2(now.getHours());
-    const mm = pad2(now.getMinutes());
-    const ss = pad2(now.getSeconds());
-    return `${y}${m}${d}_${hh}${mm}${ss}`;
-  }
-
-  function buildBinaryCodeplugFileName(vendor, model) {
-    const vendorPart = sanitizeFileNamePart(vendor);
-    const modelPart = sanitizeFileNamePart(model);
-    return `${vendorPart}_${modelPart}_${nowStampForFileName()}.img`;
   }
 
   function base64ToBytes(base64) {
@@ -2300,8 +2298,13 @@ export function createUiController() {
       module: selectedRadio?.module || "",
       className: selectedRadio?.className || "",
     });
-    downloadText("webchirp-export.csv", csvText);
-    setStatus("Exported webchirp-export.csv");
+    const fileName = buildExportFileName(
+      selectedRadio?.vendor || "webchirp",
+      selectedRadio?.model || "export",
+      "csv",
+    );
+    downloadText(fileName, csvText);
+    setStatus(`Exported ${fileName}`);
   }
 
   async function exportBinaryCodeplug() {
@@ -2319,9 +2322,10 @@ export function createUiController() {
     radioSettingsState.groups = cloneSettingsGroups(result.settings || radioSettingsState.groups);
     renderSettingsPanel();
     const bytes = base64ToBytes(result.imageBase64 || "");
-    const fileName = buildBinaryCodeplugFileName(
+    const fileName = buildExportFileName(
       result.vendor || selectedRadio.vendor,
       result.model || selectedRadio.model,
+      "img",
     );
     downloadBytes(fileName, bytes);
     setStatus(`Exported ${fileName}`);
