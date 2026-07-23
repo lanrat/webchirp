@@ -37,3 +37,4 @@ Prune entries when the code or infrastructure they describe changes.
 ## Process
 
 - **merge-can-drop-tests** (2026-07-23): the `eaeba93` upstream merge took master's `package.json` wholesale, silently dropping two clipboard test scripts from `npm run test:channels`. "Take theirs" resolutions on `package.json` need a check that branch-added test entries survive.
+- **asdf-python-unset** (2026-07-23): `python`/`python3` fail in this repo ("No version is set for command python" — asdf shim, no entry in `.tool-versions`), so the documented `python -m py_compile web/python/runtime_bridge.py` validation step errors out. `/usr/bin/python3 -m py_compile ...` works as a fallback.
