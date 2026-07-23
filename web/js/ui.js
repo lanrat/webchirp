@@ -1847,6 +1847,13 @@ export function createUiController() {
     columns.forEach((column) => {
       const th = document.createElement("th");
       th.textContent = column;
+      // Mirror the cell treatment: grey + tooltip on headers of columns the
+      // selected radio marks read-only (Location stays the selection handle).
+      const meta = radioMetadata.columns?.[column] || {};
+      if (meta.editable === false && column !== "Location") {
+        th.classList.add("readonly-cell");
+        th.title = `${column} is read-only for this radio.`;
+      }
       headerRow.appendChild(th);
     });
     tableHead.appendChild(headerRow);
