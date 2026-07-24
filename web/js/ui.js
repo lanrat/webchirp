@@ -10,11 +10,42 @@ import {
   parsePrzemiennikiMetaJson,
   parsePrzemiennikiXml,
 } from "./datasources.js";
+import {
+  buildRowsFromClipboardText,
+  computeMovedRowOrder,
+  looksLikeChannelTsv,
+  rowLooksNonEmpty,
+  serializeRowsToTsv,
+} from "./clipboard.js";
 
 const DEFAULT_SAMPLE_CSV = `Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment\n0,Simplex1,146.520000,,0.600000,,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,National Calling\n1,RepeaterA,146.940000,-,0.600000,TSQL,88.5,88.5,23,NN,23,Tone->Tone,FM,5.00,,5.0W,Local repeater\n`;
 const ISSUE_TEMPLATE_NAME = "radio_bug_report.yml";
 const ISSUE_NEW_URL = "https://github.com/jasiek/webchirp/issues/new";
 const LAST_RADIO_COOKIE = "webchirp_last_radio";
+const RADIO_SEARCH_MAX_RESULTS = 50;
+
+function sanitizeFileNamePart(text) {
+  return String(text || "")
+    .trim()
+    .replace(/[^\w.-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "radio";
+}
+
+function dateStampForFileName(date) {
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const y = date.getFullYear();
+  const m = pad2(date.getMonth() + 1);
+  const d = pad2(date.getDate());
+  return `${y}${m}${d}`;
+}
+
+// Derive an export file name like Baofeng_BF-888_20231218.img
+// (<brand>_<model>_<date>.<format>).
+export function buildExportFileName(vendor, model, extension, date = new Date()) {
+  const vendorPart = sanitizeFileNamePart(vendor);
+  const modelPart = sanitizeFileNamePart(model);
+  return `${vendorPart}_${modelPart}_${dateStampForFileName(date)}.${extension}`;
+}
 
 // Create and manage all DOM/UI state and user interaction behavior.
 export function createUiController() {
@@ -34,13 +65,25 @@ export function createUiController() {
   const reportIssueEl = document.querySelector("#report-issue");
   const serialSupportWarningEl = document.querySelector("#webserial-support-warning");
   const liveRadioSupportWarningEl = document.querySelector("#live-radio-support-warning");
+  const radioSearchEl = document.querySelector("#radio-search");
+  const radioSearchResultsEl = document.querySelector("#radio-search-results");
   const radioMakeEl = document.querySelector("#radio-make");
   const radioModelEl = document.querySelector("#radio-model");
   const serialConnectToggleEl = document.querySelector("#serial-connect-toggle");
+  const webusbConnectToggleEl = document.querySelector("#serial-connect-webusb");
   const radioDownloadEl = document.querySelector("#radio-download");
   const radioUploadEl = document.querySelector("#radio-upload");
+  const cloneProgressEl = document.querySelector("#clone-progress");
+  const cloneProgressBarEl = document.querySelector("#clone-progress-bar");
+  const cloneProgressLabelEl = document.querySelector("#clone-progress-label");
+  const cloneProgressPercentEl = document.querySelector("#clone-progress-percent");
   const channelInsertEl = document.querySelector("#channel-insert");
   const channelRemoveEl = document.querySelector("#channel-remove");
+  const channelMoveUpEl = document.querySelector("#channel-move-up");
+  const channelMoveDownEl = document.querySelector("#channel-move-down");
+  const channelCopyEl = document.querySelector("#channel-copy");
+  const channelCutEl = document.querySelector("#channel-cut");
+  const channelPasteEl = document.querySelector("#channel-paste");
   const channelMenuToggleEl = document.querySelector("#channel-menu-toggle");
   const channelMenuPopupEl = document.querySelector("#channel-menu-popup");
   const channelAddGmrsEl = document.querySelector("#channel-add-gmrs");
@@ -73,12 +116,21 @@ export function createUiController() {
   let currentHeaders = [];
   let currentRows = [];
   let radioCatalog = [];
+  let radioSearchMatches = [];
+  let radioSearchActiveIndex = -1;
   let selectedRadio = null;
   let radioMetadata = { headers: [], columns: {} };
   let radioSettingsState = { supported: false, available: false, requiresImage: false, message: "", groups: [] };
+  // Only the newest metadata/settings load may apply its results; older
+  // in-flight responses would otherwise overwrite state for a radio the user
+  // has already navigated away from.
+  let radioLoadSequence = 0;
+  let lastLoadedRadioKey = "";
   let runtimeInfo = { chirpRevision: "" };
   let lastUsbVendorId = "";
   let lastUsbProductId = "";
+  let serialTransportController = null;
+  let serialCapability = { supported: false, native: false, webusb: false };
   let lastErrorSummary = "";
   let currentEditorView = "channels";
   let activeSettingsTab = "";
@@ -93,6 +145,10 @@ export function createUiController() {
   let sidebarControlsEnabled = false;
   let serialConnected = false;
   let importChoiceResolve = null;
+  // Transport of the active connection ("webserial" or "webusb"), used to
+  // collapse the two connect toggles to a single Disconnect button when both
+  // are visible (Android).
+  let serialTransport = "";
 
   const repeaterQuerySources = {
     przemienniki: {
@@ -132,6 +188,83 @@ export function createUiController() {
     runtimeApi = api;
   }
 
+  // Wire the serial bridge's transport controls (capability + forced transport)
+  // so the UI can offer an explicit WebUSB connect path.
+  function setSerialController(controller) {
+    serialTransportController = controller || null;
+    serialCapability = controller?.capability || serialCapability;
+    updateSerialActionState();
+  }
+
+  function setSerialButtonsBusy(busy) {
+    if (serialConnectToggleEl) {
+      serialConnectToggleEl.disabled = busy;
+    }
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.disabled = busy;
+    }
+  }
+
+  // Connect using the requested transport ("auto" or "webusb").
+  async function connectSerial(preferredTransport) {
+    if (serialConnected) {
+      return;
+    }
+    serialTransportController?.setPreferredTransport(preferredTransport);
+    setSerialButtonsBusy(true);
+    try {
+      const baudRate = Number(selectedRadio?.baudRate || 9600);
+      setStatus(`Connecting serial${preferredTransport === "webusb" ? " via WebUSB" : ""}...`);
+      const result = await requireRuntimeApi().serialConnect({ baudRate });
+      serialConnected = Boolean(result?.connected);
+      if (result?.deviceName) {
+        logDebug(`SERIAL DEVICE ${result.deviceName}`);
+      }
+      serialTransport = result?.transport || "";
+      if (result?.transport) {
+        logSerial(`Transport: ${result.transport}`);
+      }
+      if (result?.usbVendorId) {
+        lastUsbVendorId = result.usbVendorId;
+      }
+      if (result?.usbProductId) {
+        lastUsbProductId = result.usbProductId;
+      }
+      if (lastUsbVendorId || lastUsbProductId) {
+        logDebug(`SERIAL USB ID ${lastUsbVendorId || "unknown"}:${lastUsbProductId || "unknown"}`);
+      }
+      setStatus(result.message || "Serial connected.");
+    } catch (error) {
+      reportActionError("Serial connect", error);
+      logSerial(`ERROR ${errorSummary(error)}`);
+    } finally {
+      setSerialButtonsBusy(false);
+      refreshSerialConnectToggleLabel();
+      updateSerialActionState();
+    }
+  }
+
+  async function disconnectSerial() {
+    setSerialButtonsBusy(true);
+    try {
+      setStatus("Disconnecting serial...");
+      const result = await requireRuntimeApi().serialDisconnect();
+      serialConnected = Boolean(result?.connected);
+      if (!serialConnected) {
+        serialTransport = "";
+      }
+      setStatus(result.message || "Serial disconnected.");
+    } catch (error) {
+      reportActionError("Serial disconnect", error);
+      logSerial(`ERROR ${errorSummary(error)}`);
+    } finally {
+      setSerialButtonsBusy(false);
+      refreshSerialConnectToggleLabel();
+      updateSerialActionState();
+    }
+  }
+
+
   function setSidebarControlsEnabled(enabled) {
     sidebarControlsEnabled = Boolean(enabled);
     for (const el of sidebarControlEls) {
@@ -155,10 +288,69 @@ export function createUiController() {
   }
 
   function refreshSerialConnectToggleLabel() {
-    if (!serialConnectToggleEl) {
+    // Mobile has no hover tooltips, so on Android the labels themselves say
+    // what each transport is for.
+    const mobile = isAndroidPlatform();
+    if (serialConnectToggleEl) {
+      serialConnectToggleEl.textContent = serialConnected
+        ? "Disconnect"
+        : (mobile ? "Connect via WebSerial (Bluetooth)" : "Connect via WebSerial");
+    }
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.textContent = serialConnected
+        ? "Disconnect"
+        : (mobile ? "Connect via WebUSB (wired adapter)" : "Connect via WebUSB");
+    }
+  }
+
+  // Show the clone progress bar in its indeterminate state until the driver's
+  // first status report arrives with real block counts.
+  function beginCloneProgress(label) {
+    if (!cloneProgressEl) {
       return;
     }
-    serialConnectToggleEl.textContent = serialConnected ? "Disconnect" : "Connect";
+    if (cloneProgressLabelEl) {
+      cloneProgressLabelEl.textContent = String(label || "Working...");
+    }
+    if (cloneProgressPercentEl) {
+      cloneProgressPercentEl.textContent = "";
+    }
+    cloneProgressBarEl?.removeAttribute?.("value");
+    cloneProgressEl.hidden = false;
+  }
+
+  // CHIRP drivers report status once per transferred block (cur/max may be -1
+  // when a driver reports no counts; the bar then stays indeterminate).
+  function updateCloneProgress(cur, max, msg) {
+    if (!cloneProgressEl) {
+      return;
+    }
+    cloneProgressEl.hidden = false;
+    if (msg && cloneProgressLabelEl) {
+      cloneProgressLabelEl.textContent = msg;
+    }
+    if (Number.isFinite(cur) && Number.isFinite(max) && max > 0 && cur >= 0) {
+      const percent = Math.max(0, Math.min(100, Math.round((cur / max) * 100)));
+      if (cloneProgressBarEl) {
+        cloneProgressBarEl.value = percent;
+      }
+      if (cloneProgressPercentEl) {
+        cloneProgressPercentEl.textContent = `${percent}%`;
+      }
+    } else {
+      // A no-count report must not leave the previous phase's percentage on
+      // screen: removing value makes the <progress> bar indeterminate again.
+      cloneProgressBarEl?.removeAttribute?.("value");
+      if (cloneProgressPercentEl) {
+        cloneProgressPercentEl.textContent = "";
+      }
+    }
+  }
+
+  function endCloneProgress() {
+    if (cloneProgressEl) {
+      cloneProgressEl.hidden = true;
+    }
   }
 
   function setCookie(name, value, maxAgeSeconds = 31536000) {
@@ -206,6 +398,7 @@ export function createUiController() {
     if (!radioCatalog.some((r) => r.vendor === make && r.key === key)) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = make;
     refreshModelOptions();
     radioModelEl.value = key;
@@ -535,18 +728,55 @@ export function createUiController() {
     return Boolean(selectedRadio?.isLiveRadio);
   }
 
+  // Android's native Web Serial only reaches Bluetooth RFCOMM serial ports, so
+  // the WebUSB connect path must stay available there for wired USB adapters.
+  function isAndroidPlatform() {
+    return /\bAndroid\b/i.test(navigator.userAgent || "");
+  }
+
   function updateSerialActionState() {
     const liveRadioUnsupported = selectedRadioIsLiveMode();
     const actionsAllowed = sidebarControlsEnabled && !liveRadioUnsupported;
 
     setLiveRadioSupportWarningVisible(liveRadioUnsupported);
 
+    // Connect controls by platform capability:
+    // - Desktop with native Web Serial: WebSerial toggle only.
+    // - Android with native Web Serial (Bluetooth RFCOMM serial ports): both
+    //   toggles — WebSerial for Bluetooth serial, WebUSB for wired USB
+    //   adapters, which Android's native Web Serial cannot drive.
+    // - WebUSB-only browsers (older Android Chrome): WebUSB toggle only.
+    // - Neither API: the WebSerial toggle stays visible (disabled) alongside
+    //   the unsupported-browser warning.
+    const webusbOnly = serialCapability.webusb && !serialCapability.native;
+    let showWebSerialToggle = !webusbOnly;
+    let showWebUsbToggle =
+      serialCapability.webusb && (!serialCapability.native || isAndroidPlatform());
+    // While connected, collapse to a single Disconnect button on the toggle
+    // matching the active transport.
+    if (serialConnected && showWebSerialToggle && showWebUsbToggle) {
+      showWebUsbToggle = serialTransport === "webusb";
+      showWebSerialToggle = !showWebUsbToggle;
+    }
+
     if (serialConnectToggleEl) {
+      serialConnectToggleEl.hidden = !showWebSerialToggle;
       serialConnectToggleEl.disabled = !actionsAllowed;
       serialConnectToggleEl.title = liveRadioUnsupported
         ? "Live-mode radios are not supported in this UI yet"
-        : "";
+        : (isAndroidPlatform()
+          ? "Connect over native Web Serial, for use with Bluetooth serial ports"
+          : "");
     }
+
+    if (webusbConnectToggleEl) {
+      webusbConnectToggleEl.hidden = !showWebUsbToggle;
+      webusbConnectToggleEl.disabled = !actionsAllowed;
+      webusbConnectToggleEl.title = liveRadioUnsupported
+        ? "Live-mode radios are not supported in this UI yet"
+        : "Connect over WebUSB, for use with FTDI FT231X/FT232R or Prolific PL2303";
+    }
+
 
     if (radioDownloadEl) {
       radioDownloadEl.disabled = !actionsAllowed;
@@ -595,31 +825,6 @@ export function createUiController() {
     return `${radio.vendor} ${radio.model}`;
   }
 
-  function sanitizeFileNamePart(text) {
-    return String(text || "")
-      .trim()
-      .replace(/[^\w.-]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "radio";
-  }
-
-  function nowStampForFileName() {
-    const now = new Date();
-    const pad2 = (n) => String(n).padStart(2, "0");
-    const y = now.getFullYear();
-    const m = pad2(now.getMonth() + 1);
-    const d = pad2(now.getDate());
-    const hh = pad2(now.getHours());
-    const mm = pad2(now.getMinutes());
-    const ss = pad2(now.getSeconds());
-    return `${y}${m}${d}_${hh}${mm}${ss}`;
-  }
-
-  function buildBinaryCodeplugFileName(vendor, model) {
-    const vendorPart = sanitizeFileNamePart(vendor);
-    const modelPart = sanitizeFileNamePart(model);
-    return `${vendorPart}_${modelPart}_${nowStampForFileName()}.img`;
-  }
-
   function base64ToBytes(base64) {
     const binary = atob(String(base64 || ""));
     const out = new Uint8Array(binary.length);
@@ -644,6 +849,171 @@ export function createUiController() {
     return Array.from(new Set(radios.map((r) => r.vendor))).sort((a, b) =>
       a.localeCompare(b),
     );
+  }
+
+  // Match a radio against a search query; every whitespace-separated token must
+  // appear somewhere in the "vendor model class" text (case-insensitive).
+  function radioMatchesFilter(radio, tokens) {
+    if (tokens.length === 0) {
+      return true;
+    }
+    const haystack = `${radio.vendor} ${radio.model} ${radio.className}`.toLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  }
+
+  // Catalog entries matching a free-text search query.
+  function matchingRadios(query) {
+    const tokens = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+      return [];
+    }
+    return radioCatalog.filter((radio) => radioMatchesFilter(radio, tokens));
+  }
+
+  // "<Make> <Model>" label for a search suggestion; the driver class is added
+  // when several catalog entries share the same vendor+model text.
+  function radioSearchLabel(radio, hasDuplicateLabel) {
+    const base = makeModelLabel(radio);
+    const label = radio.isLiveRadio ? `⚡ ${base}` : base;
+    return hasDuplicateLabel ? `${label} (${radio.className})` : label;
+  }
+
+  function hideRadioSearchResults() {
+    radioSearchMatches = [];
+    radioSearchActiveIndex = -1;
+    if (radioSearchResultsEl) {
+      radioSearchResultsEl.hidden = true;
+      radioSearchResultsEl.innerHTML = "";
+    }
+    radioSearchEl?.setAttribute("aria-expanded", "false");
+  }
+
+  // Clear the search box and close its suggestion list (programmatic selections).
+  function clearRadioFilter() {
+    if (radioSearchEl) {
+      radioSearchEl.value = "";
+    }
+    hideRadioSearchResults();
+  }
+
+  // Render the autocomplete dropdown for the current search box contents.
+  function renderRadioSearchResults() {
+    if (!radioSearchResultsEl) {
+      return;
+    }
+    const query = String(radioSearchEl?.value || "").trim();
+    if (!query) {
+      hideRadioSearchResults();
+      return;
+    }
+    const matches = matchingRadios(query);
+    radioSearchMatches = matches.slice(0, RADIO_SEARCH_MAX_RESULTS);
+    radioSearchActiveIndex = radioSearchMatches.length > 0 ? 0 : -1;
+    radioSearchResultsEl.innerHTML = "";
+
+    if (matches.length === 0) {
+      const li = document.createElement("li");
+      li.classList.add("radio-search-empty");
+      li.textContent = "No matching radios";
+      radioSearchResultsEl.appendChild(li);
+    } else {
+      const labelCounts = new Map();
+      for (const radio of radioSearchMatches) {
+        const label = makeModelLabel(radio);
+        labelCounts.set(label, (labelCounts.get(label) || 0) + 1);
+      }
+      radioSearchMatches.forEach((radio, index) => {
+        const li = document.createElement("li");
+        li.setAttribute("role", "option");
+        li.dataset.index = String(index);
+        const hasDuplicateLabel = (labelCounts.get(makeModelLabel(radio)) || 0) > 1;
+        li.textContent = radioSearchLabel(radio, hasDuplicateLabel);
+        if (index === radioSearchActiveIndex) {
+          li.classList.add("is-active");
+        }
+        radioSearchResultsEl.appendChild(li);
+      });
+      if (matches.length > radioSearchMatches.length) {
+        const li = document.createElement("li");
+        li.classList.add("radio-search-more");
+        li.textContent = `${matches.length - radioSearchMatches.length} more — keep typing to narrow down`;
+        radioSearchResultsEl.appendChild(li);
+      }
+    }
+
+    radioSearchResultsEl.hidden = false;
+    radioSearchEl?.setAttribute("aria-expanded", "true");
+  }
+
+  // Move the keyboard highlight in the suggestion list by delta and keep it in view.
+  function moveRadioSearchActive(delta) {
+    if (radioSearchMatches.length === 0) {
+      return;
+    }
+    const count = radioSearchMatches.length;
+    radioSearchActiveIndex = (radioSearchActiveIndex + delta + count) % count;
+    const items = radioSearchResultsEl?.querySelectorAll("li[role='option']") || [];
+    items.forEach((li, index) => {
+      li.classList.toggle("is-active", index === radioSearchActiveIndex);
+    });
+    items[radioSearchActiveIndex]?.scrollIntoView({ block: "nearest" });
+  }
+
+  // Apply a suggestion: sync the make/model dropdowns and load the radio.
+  function applyRadioSearchSelection(radio) {
+    if (!radio) {
+      return;
+    }
+    if (radioSearchEl) {
+      radioSearchEl.value = makeModelLabel(radio);
+    }
+    hideRadioSearchResults();
+    radioMakeEl.value = radio.vendor;
+    refreshModelOptions();
+    radioModelEl.value = radio.key;
+    selectedRadio = radio;
+    logDebug(
+      `RADIO SELECT ${makeModelLabel(radio)} (${radio.module}.${radio.className})`,
+    );
+    reloadForSelectedRadio();
+  }
+
+  // Shared side effects after the selected radio changes via make/model/search.
+  function reloadForSelectedRadio() {
+    updateSerialActionState();
+    persistSelectedRadioCookie();
+    clearInvalidHighlights();
+    clearInvalidSettings();
+    if (selectedRadio && selectedRadio.key === lastLoadedRadioKey) {
+      renderTable();
+      return;
+    }
+    const loadToken = nextRadioLoadToken();
+    Promise.all([
+      loadSelectedRadioMetadata(loadToken),
+      loadSelectedRadioSettings({ loadToken }),
+    ])
+      .then(() => {
+        if (isStaleRadioLoad(loadToken)) {
+          return;
+        }
+        lastLoadedRadioKey = selectedRadio?.key || "";
+        renderTable();
+      })
+      .catch((error) => {
+        if (!isStaleRadioLoad(loadToken)) {
+          reportActionError("Metadata load", error);
+        }
+      });
+  }
+
+  function nextRadioLoadToken() {
+    radioLoadSequence += 1;
+    return radioLoadSequence;
+  }
+
+  function isStaleRadioLoad(loadToken) {
+    return loadToken !== radioLoadSequence;
   }
 
   function formatRadioModelOption(radio, hasDuplicateModel) {
@@ -702,6 +1072,7 @@ export function createUiController() {
     if (!target) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = target.vendor;
     refreshModelOptions();
     radioModelEl.value = target.key;
@@ -725,6 +1096,7 @@ export function createUiController() {
     if (!fallback) {
       return false;
     }
+    clearRadioFilter();
     radioMakeEl.value = fallback.vendor;
     refreshModelOptions();
     radioModelEl.value = fallback.key;
@@ -733,19 +1105,31 @@ export function createUiController() {
     return true;
   }
 
-  // Populate make dropdown from catalog and initialize model options.
+  // Populate make dropdown from the catalog and initialize model options,
+  // preserving the current vendor when it is still present.
   function refreshMakeOptions() {
+    const previousVendor = radioMakeEl.value;
     const vendors = uniqueVendors(radioCatalog);
     radioMakeEl.innerHTML = "";
+
+    if (vendors.length === 0) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No matching radios";
+      radioMakeEl.appendChild(option);
+      radioModelEl.innerHTML = "";
+      selectedRadio = null;
+      updateSerialActionState();
+      return;
+    }
+
     for (const vendor of vendors) {
       const option = document.createElement("option");
       option.value = vendor;
       option.textContent = vendor;
       radioMakeEl.appendChild(option);
     }
-    if (vendors.length > 0) {
-      radioMakeEl.value = vendors[0];
-    }
+    radioMakeEl.value = vendors.includes(previousVendor) ? previousVendor : vendors[0];
     refreshModelOptions();
   }
 
@@ -774,9 +1158,12 @@ export function createUiController() {
   }
 
   // Coerce and constrain edited cell values according to CHIRP column metadata.
-  function normalizeValue(column, value, meta, previous) {
+  // allowReadOnly lets programmatic row builders (paste, repeater imports) fill
+  // columns the grid renders read-only (e.g. TStep on radios with
+  // has_tuning_step=False); kind/options validation still applies.
+  function normalizeValue(column, value, meta, previous, { allowReadOnly = false } = {}) {
     let v = String(value ?? "");
-    if (!meta || meta.editable === false) {
+    if (!meta || (meta.editable === false && !allowReadOnly)) {
       return String(previous ?? v);
     }
 
@@ -824,6 +1211,16 @@ export function createUiController() {
     if (meta.kind === "enum") {
       const options = Array.isArray(meta.options) ? meta.options.map(String) : [];
       if (options.length > 0 && !options.includes(v)) {
+        // Numeric enums (TStep "5.00", rToneFreq "88.5", DtcsCode "023") may
+        // arrive from spreadsheets without CHIRP's zero padding ("5", "23");
+        // match them by numeric value before giving up.
+        const numeric = Number.parseFloat(v);
+        const numericMatch = Number.isFinite(numeric)
+          ? options.find((option) => Number.parseFloat(option) === numeric)
+          : undefined;
+        if (numericMatch !== undefined) {
+          return numericMatch;
+        }
         return String(previous ?? options[0] ?? "");
       }
       return v;
@@ -1192,7 +1589,7 @@ export function createUiController() {
       return;
     }
     const meta = radioMetadata.columns?.[column] || {};
-    row[column] = normalizeValue(column, value, meta, row[column]);
+    row[column] = normalizeValue(column, value, meta, row[column], { allowReadOnly: true });
   }
 
   function findEnumOption(column, choices, caseInsensitive = false) {
@@ -1282,27 +1679,238 @@ export function createUiController() {
     return true;
   }
 
-  function removeSelectedChannelRows() {
-    const selectedIndexes = sortedSelectedRowIndexes();
-    if (selectedIndexes.length === 0) {
-      setStatus("Select one or more channels to remove.");
-      return;
-    }
-
-    for (let i = selectedIndexes.length - 1; i >= 0; i -= 1) {
-      currentRows.splice(selectedIndexes[i], 1);
+  // Remove exactly these row objects. Identity-based so a removal captured
+  // before an await (Cut's clipboard write) deletes the rows that were
+  // serialized even if the selection or row order changed while it was
+  // pending. Returns how many rows were actually removed.
+  function removeChannelRows(rowsToRemove) {
+    const identity = new Set(rowsToRemove);
+    const firstIndex = currentRows.findIndex((row) => identity.has(row));
+    const before = currentRows.length;
+    currentRows = currentRows.filter((row) => !identity.has(row));
+    const removed = before - currentRows.length;
+    if (removed === 0) {
+      return 0;
     }
     reindexLocationColumn();
     clearInvalidHighlights();
 
     resetRowSelection();
     if (currentRows.length > 0) {
-      const nextIndex = Math.min(selectedIndexes[0], currentRows.length - 1);
+      const nextIndex = Math.min(firstIndex, currentRows.length - 1);
       selectedRowIndexes = new Set([nextIndex]);
       selectionAnchorIndex = nextIndex;
     }
     renderTable();
-    setStatus(`Removed ${selectedIndexes.length} selected channel(s).`);
+    return removed;
+  }
+
+  function removeSelectedChannelRows() {
+    const selectedIndexes = sortedSelectedRowIndexes();
+    if (selectedIndexes.length === 0) {
+      setStatus("Select one or more channels to remove.");
+      return;
+    }
+    const removed = removeChannelRows(selectedIndexes.map((idx) => currentRows[idx]));
+    setStatus(`Removed ${removed} selected channel(s).`);
+  }
+
+  function hasDomTextSelection() {
+    const selection = window.getSelection();
+    return Boolean(selection && !selection.isCollapsed && String(selection).trim() !== "");
+  }
+
+  // Channel clipboard/reorder shortcuts only apply in the channel view, with
+  // no modal open and no cell editor (or other field) focused. Copy/cut also
+  // defer to a regular DOM text selection (e.g. copying Debug Output text).
+  function channelShortcutsActive(event, { respectTextSelection = false } = {}) {
+    if (currentEditorView !== "channels") {
+      return false;
+    }
+    if (isPrzemiennikiModalOpen()) {
+      return false;
+    }
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("input, select, textarea, [contenteditable='true'], [contenteditable='']")
+    ) {
+      return false;
+    }
+    if (respectTextSelection && hasDomTextSelection()) {
+      return false;
+    }
+    return true;
+  }
+
+  // Serialize the explicitly selected rows (never the select-nothing-means-
+  // all-rows fallback: cut would otherwise silently delete every channel).
+  function selectedChannelTsv(actionLabel) {
+    const selectedIndexes = sortedSelectedRowIndexes();
+    if (selectedIndexes.length === 0) {
+      setStatus(`Select one or more channels to ${actionLabel}.`);
+      return null;
+    }
+    const rows = selectedIndexes.map((idx) => currentRows[idx]);
+    return {
+      tsv: serializeRowsToTsv(rows),
+      count: rows.length,
+      rows,
+    };
+  }
+
+  function copySelectedChannels(event) {
+    const payload = selectedChannelTsv("copy");
+    if (!payload) {
+      return;
+    }
+    event.clipboardData.setData("text/plain", payload.tsv);
+    event.preventDefault();
+    setStatus(`Copied ${payload.count} channel(s) to clipboard.`);
+  }
+
+  function cutSelectedChannels(event) {
+    const payload = selectedChannelTsv("cut");
+    if (!payload) {
+      return;
+    }
+    event.clipboardData.setData("text/plain", payload.tsv);
+    event.preventDefault();
+    const removed = removeChannelRows(payload.rows);
+    setStatus(`Cut ${removed} channel(s) to clipboard.`);
+  }
+
+  async function writeChannelTsvToClipboard(actionLabel, remove) {
+    const payload = selectedChannelTsv(actionLabel);
+    if (!payload) {
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      setStatus(`Clipboard write not available; press Ctrl+${remove ? "X" : "C"} / Cmd+${remove ? "X" : "C"} instead.`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(payload.tsv);
+    } catch (error) {
+      logDebug(`CLIPBOARD write failed: ${error}`);
+      setStatus(`Clipboard write blocked; press Ctrl+${remove ? "X" : "C"} / Cmd+${remove ? "X" : "C"} instead.`);
+      return;
+    }
+    if (remove) {
+      // The write may have been parked behind a permission prompt; delete the
+      // rows that were serialized, not whatever is selected now.
+      const removed = removeChannelRows(payload.rows);
+      setStatus(`Cut ${removed} channel(s) to clipboard.`);
+    } else {
+      setStatus(`Copied ${payload.count} channel(s) to clipboard.`);
+    }
+  }
+
+  // Paste-overwrite starting at the first selected row (CHIRP desktop
+  // semantics): pasted rows replace existing rows downward, extend the list
+  // past the end, and require confirmation when non-empty rows would be
+  // overwritten. With no selection, pasted rows append at the end.
+  function pasteChannelsFromText(text) {
+    if (!currentHeaders.length) {
+      setStatus("No channel schema loaded yet.");
+      return;
+    }
+    if (!looksLikeChannelTsv(text)) {
+      setStatus("Clipboard does not contain tab-separated channel data.");
+      return;
+    }
+    const built = buildRowsFromClipboardText(text, {
+      createBlankRow: createBlankChannelRow,
+      setRowValue: setRowValueIfPresent,
+    });
+    const rows = built?.rows ?? [];
+    if (rows.length === 0) {
+      setStatus("No channels found in pasted text.");
+      return;
+    }
+    const selectedIndexes = sortedSelectedRowIndexes();
+    const startAt = selectedIndexes.length > 0 ? selectedIndexes[0] : currentRows.length;
+    const overwriteLocations = [];
+    for (let offset = 0; offset < rows.length && startAt + offset < currentRows.length; offset += 1) {
+      const target = currentRows[startAt + offset];
+      if (rowLooksNonEmpty(target)) {
+        overwriteLocations.push(String(target.Location ?? startAt + offset));
+      }
+    }
+    if (overwriteLocations.length > 0) {
+      const summary =
+        overwriteLocations.length === 1
+          ? `channel ${overwriteLocations[0]}`
+          : overwriteLocations.length > 10
+            ? `${overwriteLocations.length} existing channels`
+            : `channels ${overwriteLocations.join(", ")}`;
+      if (!window.confirm(`Pasted channels will overwrite ${summary}. Continue?`)) {
+        setStatus("Paste cancelled.");
+        return;
+      }
+    }
+    rows.forEach((row, offset) => {
+      const at = startAt + offset;
+      if (at < currentRows.length) {
+        currentRows[at] = row;
+      } else {
+        currentRows.push(row);
+      }
+    });
+    reindexLocationColumn();
+    clearInvalidHighlights();
+
+    selectedRowIndexes = new Set(rows.map((_, offset) => startAt + offset));
+    selectionAnchorIndex = startAt;
+    renderTable();
+    setStatus(`Pasted ${rows.length} channel(s) at channel ${startAt}.`);
+  }
+
+  async function pasteChannelsViaApi() {
+    if (!navigator.clipboard?.readText) {
+      setStatus("Clipboard read not available; press Ctrl+V / Cmd+V in the channel view instead.");
+      return;
+    }
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (error) {
+      logDebug(`CLIPBOARD read failed: ${error}`);
+      setStatus("Clipboard read blocked; press Ctrl+V / Cmd+V in the channel view instead.");
+      return;
+    }
+    pasteChannelsFromText(text);
+  }
+
+  // Move each selected row by one position, preserving relative order and
+  // clamping at the edges; Location renumbers to match the new order.
+  function moveSelectedChannelRows(direction) {
+    const selectedIndexes = sortedSelectedRowIndexes();
+    if (selectedIndexes.length === 0) {
+      setStatus("Select one or more channels to move.");
+      return;
+    }
+    const { order, selected, moved } = computeMovedRowOrder(
+      currentRows.length,
+      selectedIndexes,
+      direction,
+    );
+    if (!moved) {
+      setStatus(
+        direction < 0
+          ? "Selected channels are already at the top."
+          : "Selected channels are already at the bottom.",
+      );
+      return;
+    }
+    currentRows = order.map((idx) => currentRows[idx]);
+    reindexLocationColumn();
+    clearInvalidHighlights();
+
+    selectedRowIndexes = new Set(selected);
+    selectionAnchorIndex = direction < 0 ? Math.min(...selected) : Math.max(...selected);
+    renderTable();
+    setStatus(`Moved ${selected.length} channel(s) ${direction < 0 ? "up" : "down"}.`);
   }
 
   // Create a table cell editor (input/select) based on CHIRP column metadata.
@@ -1310,6 +1918,16 @@ export function createUiController() {
     const meta = radioMetadata.columns?.[column] || {};
     const current = String(row[column] ?? "");
     const readOnly = column === "Location" || meta.editable === false;
+
+    // Grey out read-only cells and explain why; Location is excluded because
+    // its button is the row-selection handle, not a disabled editor.
+    function markReadOnly(editor) {
+      if (readOnly && column !== "Location") {
+        editor.classList.add("readonly-cell");
+        editor.title = `${column} is read-only for this radio.`;
+      }
+      return editor;
+    }
     if (column === "Location") {
       const button = document.createElement("button");
       button.type = "button";
@@ -1341,7 +1959,7 @@ export function createUiController() {
         currentRows[rowIdx][column] = next;
         select.value = next;
       });
-      return select;
+      return markReadOnly(select);
     }
 
     const input = document.createElement("input");
@@ -1361,7 +1979,7 @@ export function createUiController() {
       currentRows[rowIdx][column] = next;
       input.value = next;
     });
-    return input;
+    return markReadOnly(input);
   }
 
   // Render the editable channel table using current rows and metadata rules.
@@ -1375,6 +1993,13 @@ export function createUiController() {
     columns.forEach((column) => {
       const th = document.createElement("th");
       th.textContent = column;
+      // Mirror the cell treatment: grey + tooltip on headers of columns the
+      // selected radio marks read-only (Location stays the selection handle).
+      const meta = radioMetadata.columns?.[column] || {};
+      if (meta.editable === false && column !== "Location") {
+        th.classList.add("readonly-cell");
+        th.title = `${column} is read-only for this radio.`;
+      }
       headerRow.appendChild(th);
     });
     tableHead.appendChild(headerRow);
@@ -1402,7 +2027,7 @@ export function createUiController() {
   }
 
   // Load selected radio's CHIRP-derived column metadata from Python runtime.
-  async function loadSelectedRadioMetadata() {
+  async function loadSelectedRadioMetadata(loadToken = nextRadioLoadToken()) {
     if (!selectedRadio) {
       return;
     }
@@ -1410,11 +2035,15 @@ export function createUiController() {
       module: selectedRadio.module,
       className: selectedRadio.className,
     });
+    if (isStaleRadioLoad(loadToken)) {
+      return;
+    }
     radioMetadata = meta || { headers: [], columns: {} };
     currentHeaders = radioMetadata.headers?.length ? radioMetadata.headers : currentHeaders;
   }
 
   async function loadSelectedRadioSettings(options = {}) {
+    const loadToken = options.loadToken ?? nextRadioLoadToken();
     if (!selectedRadio) {
       radioSettingsState = {
         supported: false,
@@ -1451,6 +2080,10 @@ export function createUiController() {
     } catch (error) {
       logDebug(`SETTINGS LOAD FALLBACK ${errorSummary(error)}`);
       nextState.message = "Radio-wide settings could not be prepared.";
+    }
+
+    if (isStaleRadioLoad(loadToken)) {
+      return;
     }
 
     if (preserveCurrent && radioHasSettings() && nextState.supported) {
@@ -1833,8 +2466,13 @@ export function createUiController() {
       module: selectedRadio?.module || "",
       className: selectedRadio?.className || "",
     });
-    downloadText("webchirp-export.csv", csvText);
-    setStatus("Exported webchirp-export.csv");
+    const fileName = buildExportFileName(
+      selectedRadio?.vendor || "webchirp",
+      selectedRadio?.model || "export",
+      "csv",
+    );
+    downloadText(fileName, csvText);
+    setStatus(`Exported ${fileName}`);
   }
 
   async function exportBinaryCodeplug() {
@@ -1852,9 +2490,10 @@ export function createUiController() {
     radioSettingsState.groups = cloneSettingsGroups(result.settings || radioSettingsState.groups);
     renderSettingsPanel();
     const bytes = base64ToBytes(result.imageBase64 || "");
-    const fileName = buildBinaryCodeplugFileName(
+    const fileName = buildExportFileName(
       result.vendor || selectedRadio.vendor,
       result.model || selectedRadio.model,
+      "img",
     );
     downloadBytes(fileName, bytes);
     setStatus(`Exported ${fileName}`);
@@ -1959,9 +2598,27 @@ export function createUiController() {
     channelRemoveEl?.addEventListener("click", () => {
       removeSelectedChannelRows();
     });
+    channelMoveUpEl?.addEventListener("click", () => {
+      moveSelectedChannelRows(-1);
+    });
+    channelMoveDownEl?.addEventListener("click", () => {
+      moveSelectedChannelRows(1);
+    });
     channelMenuToggleEl?.addEventListener("click", (event) => {
       event.stopPropagation();
       toggleChannelMenu();
+    });
+    channelCopyEl?.addEventListener("click", async () => {
+      setChannelMenuOpen(false);
+      await writeChannelTsvToClipboard("copy", false);
+    });
+    channelCutEl?.addEventListener("click", async () => {
+      setChannelMenuOpen(false);
+      await writeChannelTsvToClipboard("cut", true);
+    });
+    channelPasteEl?.addEventListener("click", async () => {
+      setChannelMenuOpen(false);
+      await pasteChannelsViaApi();
     });
     channelAddGmrsEl?.addEventListener("click", () => {
       setChannelMenuOpen(false);
@@ -2055,7 +2712,42 @@ export function createUiController() {
           return;
         }
         setChannelMenuOpen(false);
+        return;
       }
+      if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        if (!channelShortcutsActive(event)) {
+          return;
+        }
+        event.preventDefault();
+        moveSelectedChannelRows(event.key === "ArrowUp" ? -1 : 1);
+      }
+    });
+
+    // Ctrl/Cmd+C, X, V arrive as native clipboard events, which supply
+    // clipboardData synchronously and need no permission prompt (unlike the
+    // async navigator.clipboard API used by the menu items). The guard defers
+    // to normal browser behavior inside inputs/selects and text selections.
+    document.addEventListener("copy", (event) => {
+      if (!channelShortcutsActive(event, { respectTextSelection: true })) {
+        return;
+      }
+      copySelectedChannels(event);
+    });
+
+    document.addEventListener("cut", (event) => {
+      if (!channelShortcutsActive(event, { respectTextSelection: true })) {
+        return;
+      }
+      cutSelectedChannels(event);
+    });
+
+    document.addEventListener("paste", (event) => {
+      if (!channelShortcutsActive(event)) {
+        return;
+      }
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      event.preventDefault();
+      pasteChannelsFromText(text);
     });
 
     document.querySelector("#load-sample").addEventListener("click", async () => {
@@ -2134,18 +2826,58 @@ export function createUiController() {
       }
     });
 
+    // Typing opens an autocomplete list of "<Make> <Model>" suggestions; the
+    // (Pyodide-backed) metadata/settings load only happens once the user picks
+    // a suggestion via keyboard or mouse.
+    radioSearchEl?.addEventListener("input", () => {
+      renderRadioSearchResults();
+    });
+
+    radioSearchEl?.addEventListener("focus", () => {
+      renderRadioSearchResults();
+    });
+
+    radioSearchEl?.addEventListener("keydown", (event) => {
+      const isOpen = radioSearchResultsEl && !radioSearchResultsEl.hidden;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (!isOpen) {
+          renderRadioSearchResults();
+          return;
+        }
+        moveRadioSearchActive(event.key === "ArrowDown" ? 1 : -1);
+      } else if (event.key === "Enter") {
+        if (isOpen && radioSearchActiveIndex >= 0) {
+          event.preventDefault();
+          applyRadioSearchSelection(radioSearchMatches[radioSearchActiveIndex]);
+        }
+      } else if (event.key === "Escape") {
+        if (isOpen) {
+          event.stopPropagation();
+          hideRadioSearchResults();
+        }
+      }
+    });
+
+    radioSearchEl?.addEventListener("blur", () => {
+      // Delay so a click on a suggestion (which blurs the input) still lands.
+      setTimeout(() => hideRadioSearchResults(), 150);
+    });
+
+    radioSearchResultsEl?.addEventListener("mousedown", (event) => {
+      // Prevent the input blur so the click handler below sees the list open.
+      event.preventDefault();
+      const li = event.target.closest("li[role='option']");
+      if (!li) {
+        return;
+      }
+      const index = Number(li.dataset.index);
+      applyRadioSearchSelection(radioSearchMatches[index]);
+    });
+
     radioMakeEl.addEventListener("change", () => {
       refreshModelOptions();
-      updateSerialActionState();
-      persistSelectedRadioCookie();
-      clearInvalidHighlights();
-      clearInvalidSettings();
-      Promise.all([
-        loadSelectedRadioMetadata(),
-        loadSelectedRadioSettings(),
-      ])
-        .then(() => renderTable())
-        .catch((error) => reportActionError("Metadata load", error));
+      reloadForSelectedRadio();
     });
 
     radioModelEl.addEventListener("change", () => {
@@ -2156,16 +2888,7 @@ export function createUiController() {
           `RADIO SELECT ${makeModelLabel(selectedRadio)} (${selectedRadio.module}.${selectedRadio.className})`,
         );
       }
-      updateSerialActionState();
-      persistSelectedRadioCookie();
-      clearInvalidHighlights();
-      clearInvalidSettings();
-      Promise.all([
-        loadSelectedRadioMetadata(),
-        loadSelectedRadioSettings(),
-      ])
-        .then(() => renderTable())
-        .catch((error) => reportActionError("Metadata load", error));
+      reloadForSelectedRadio();
     });
 
     viewChannelsEl?.addEventListener("click", () => {
@@ -2181,44 +2904,22 @@ export function createUiController() {
       renderSettingsPanel();
     });
 
-    serialConnectToggleEl?.addEventListener("click", async () => {
-      serialConnectToggleEl.disabled = true;
-      try {
-        if (serialConnected) {
-          setStatus("Disconnecting serial...");
-          const result = await requireRuntimeApi().serialDisconnect();
-          serialConnected = Boolean(result?.connected);
-          refreshSerialConnectToggleLabel();
-          setStatus(result.message || "Serial disconnected.");
-          return;
-        }
-
-        const baudRate = Number(selectedRadio?.baudRate || 9600);
-        setStatus("Connecting serial...");
-        const result = await requireRuntimeApi().serialConnect({ baudRate });
-        serialConnected = Boolean(result?.connected);
-        refreshSerialConnectToggleLabel();
-        if (result?.deviceName) {
-          logDebug(`SERIAL DEVICE ${result.deviceName}`);
-        }
-        if (result?.usbVendorId) {
-          lastUsbVendorId = result.usbVendorId;
-        }
-        if (result?.usbProductId) {
-          lastUsbProductId = result.usbProductId;
-        }
-        if (lastUsbVendorId || lastUsbProductId) {
-          logDebug(`SERIAL USB ID ${lastUsbVendorId || "unknown"}:${lastUsbProductId || "unknown"}`);
-        }
-        setStatus(result.message || "Serial connected.");
-      } catch (error) {
-        const action = serialConnected ? "Serial disconnect" : "Serial connect";
-        reportActionError(action, error);
-        logSerial(`ERROR ${errorSummary(error)}`);
-      } finally {
-        serialConnectToggleEl.disabled = false;
+    serialConnectToggleEl?.addEventListener("click", () => {
+      if (serialConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial("auto");
       }
     });
+
+    webusbConnectToggleEl?.addEventListener("click", () => {
+      if (serialConnected) {
+        disconnectSerial();
+      } else {
+        connectSerial("webusb");
+      }
+    });
+
 
     document.querySelector("#serial-transaction")?.addEventListener("click", async () => {
       const txHex = document.querySelector("#tx-hex")?.value || "";
@@ -2239,6 +2940,26 @@ export function createUiController() {
     document.querySelector("#debug-clear").addEventListener("click", () => {
       debugOutputEl.value = "";
       lastErrorSummary = "";
+    });
+
+    document.querySelector("#debug-copy")?.addEventListener("click", async () => {
+      const text = debugOutputEl.value || "";
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          // Fallback for browsers/contexts without the async clipboard API.
+          debugOutputEl.focus();
+          debugOutputEl.select();
+          document.execCommand("copy");
+        }
+        setStatus("Debug log copied to clipboard.");
+      } catch {
+        // Last resort: select the text so the user can copy manually.
+        debugOutputEl.focus();
+        debugOutputEl.select();
+        setStatus("Could not copy automatically; log text is selected — copy it manually.");
+      }
     });
 
     reportIssueEl?.addEventListener("click", () => {
@@ -2262,6 +2983,7 @@ export function createUiController() {
       try {
         trackRadioEvent("radio_download", selectedRadio);
         setStatus(`Downloading from ${makeModelLabel(selectedRadio)}...`);
+        beginCloneProgress(`Downloading from ${makeModelLabel(selectedRadio)}...`);
         const result = await requireRuntimeApi().downloadSelectedRadio({
           module: selectedRadio.module,
           className: selectedRadio.className,
@@ -2291,6 +3013,8 @@ export function createUiController() {
       } catch (error) {
         reportActionError("Download", error);
         logSerial(`ERROR ${errorSummary(error)}`);
+      } finally {
+        endCloneProgress();
       }
     });
 
@@ -2313,6 +3037,7 @@ export function createUiController() {
           return;
         }
         setStatus(`Uploading to ${makeModelLabel(selectedRadio)}...`);
+        beginCloneProgress(`Uploading to ${makeModelLabel(selectedRadio)}...`);
         const uploadResult = await requireRuntimeApi().uploadSelectedRadio({
           module: selectedRadio.module,
           className: selectedRadio.className,
@@ -2326,6 +3051,8 @@ export function createUiController() {
       } catch (error) {
         reportActionError("Upload", error);
         logSerial(`ERROR ${errorSummary(error)}`);
+      } finally {
+        endCloneProgress();
       }
     });
   }
@@ -2363,9 +3090,11 @@ export function createUiController() {
 
   return {
     setRuntimeApi,
+    setSerialController,
     setStatus,
     logSerial,
     logDebug,
+    updateCloneProgress,
     init,
     selectedRowsForOperations,
     onRuntimeCrash(message) {

@@ -46,7 +46,13 @@
   <body>
     <div class="app-shell">
       <header class="toolbar">
-        <h1>WebCHIRP</h1>
+        <div class="toolbar-title">
+          <h1>WebCHIRP</h1>
+          <p class="version-info" id="version-info" hidden>
+            Updated <span id="version-date"></span> · CHIRP
+            <a id="version-chirp" href="#" target="_blank" rel="noreferrer"></a>
+          </p>
+        </div>
         <div class="toolbar-actions">
           <a
             class="toolbar-link"
@@ -101,16 +107,39 @@
               Live-mode radios are not supported in this UI at the moment. Select a clone-mode
               radio to use Connect, Download Radio, and Upload Radio.
             </p>
+            <label for="radio-search">Search radios</label>
+            <div class="radio-search-wrap">
+              <input
+                id="radio-search"
+                type="search"
+                placeholder="Type a make or model…"
+                autocomplete="off"
+                role="combobox"
+                aria-expanded="false"
+                aria-controls="radio-search-results"
+                aria-autocomplete="list"
+                disabled
+              />
+              <ul id="radio-search-results" class="radio-search-results" role="listbox" hidden></ul>
+            </div>
             <label for="radio-make">Radio make</label>
             <select id="radio-make" disabled></select>
             <label for="radio-model">Radio model</label>
             <select id="radio-model" disabled></select>
             <div class="serial-actions">
-              <button id="serial-connect-toggle" disabled>Connect</button>
+              <button id="serial-connect-toggle" disabled>Connect via WebSerial</button>
+              <button id="serial-connect-webusb" disabled hidden>Connect via WebUSB</button>
             </div>
             <div class="serial-actions">
               <button id="radio-download" disabled>Download Radio</button>
               <button id="radio-upload" disabled>Upload Radio</button>
+            </div>
+            <div id="clone-progress" class="clone-progress" hidden>
+              <div class="clone-progress-text">
+                <span id="clone-progress-label"></span>
+                <span id="clone-progress-percent"></span>
+              </div>
+              <progress id="clone-progress-bar" max="100"></progress>
             </div>
           </details>
 
@@ -140,6 +169,8 @@
             <div class="channel-toolbar">
               <button id="channel-insert" type="button" title="Insert new channel" aria-label="Insert new channel">➕</button>
               <button id="channel-remove" type="button" title="Remove selected channels" aria-label="Remove selected channels">➖</button>
+              <button id="channel-move-up" type="button" title="Move selected channels up (Alt+ArrowUp)" aria-label="Move selected channels up">⬆️</button>
+              <button id="channel-move-down" type="button" title="Move selected channels down (Alt+ArrowDown)" aria-label="Move selected channels down">⬇️</button>
               <div class="channel-menu">
                 <button
                   id="channel-menu-toggle"
@@ -152,6 +183,16 @@
                   Actions
                 </button>
                 <div id="channel-menu-popup" class="channel-menu-popup hidden" role="menu">
+                  <button id="channel-copy" type="button" role="menuitem">
+                    📋 Copy selected channels
+                  </button>
+                  <button id="channel-cut" type="button" role="menuitem">
+                    ✂️ Cut selected channels
+                  </button>
+                  <button id="channel-paste" type="button" role="menuitem">
+                    📥 Paste channels
+                  </button>
+                  <hr class="channel-menu-separator" />
                   <button id="channel-add-gmrs" type="button" role="menuitem">
                     🇺🇸 Add GMRS channels
                   </button>
@@ -198,6 +239,7 @@
           <h2>Debug Output</h2>
           <div class="debug-actions">
             <button id="report-issue" type="button">Report Bug</button>
+            <button id="debug-copy" type="button">Copy</button>
             <button id="debug-clear" type="button">Clear</button>
           </div>
         </div>
@@ -280,6 +322,7 @@
     <input id="csv-file" type="file" accept=".csv,text/csv" hidden />
     <input id="img-file" type="file" accept=".img,application/octet-stream" hidden />
     <script type="module" src="./js/github-button.js"></script>
+    <script type="module" src="./js/version-info.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

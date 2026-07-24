@@ -18,6 +18,7 @@ from js import (
     fetch_chirp_source,
     serial_close,
     serial_prepare_clone,
+    serial_progress,
     serial_reset_buffers,
     serial_log,
     serial_open,
@@ -504,19 +505,39 @@ def _best_effort_radio_instance(module_name: str, class_name: str, require_cache
     else:
         radio = _fallback_constructor()
 
-    radio.status_fn = _status_to_log
+    radio.status_fn = _make_status_logger()
     return radio
 
 
-def _status_to_log(status):
-    """Adapt CHIRP status callbacks into debug log lines."""
-    msg = getattr(status, "msg", "")
-    cur = getattr(status, "cur", None)
-    maxv = getattr(status, "max", None)
-    if cur is None or maxv is None:
-        serial_log(str(msg))
-    else:
-        serial_log(f"{msg}: {cur}/{maxv}")
+def _make_status_logger():
+    """Build a status callback that forwards CHIRP reports to the UI progress display.
+
+    Drivers report one status per transferred block; forwarding each report to
+    the progress bar keeps it live, while the debug log only records message
+    changes (phase transitions) instead of one line per block. The dedup state
+    lives in this closure so it is scoped to one radio instance/operation: a
+    driver that repeats the same message through a whole transfer must not
+    suppress that message from the next transfer's log.
+    """
+    last_msg = None
+
+    def _status_to_log(status):
+        nonlocal last_msg
+        msg = str(getattr(status, "msg", "") or "")
+        cur = getattr(status, "cur", None)
+        maxv = getattr(status, "max", None)
+        try:
+            if cur is None or maxv is None:
+                serial_progress(-1, -1, msg)
+            else:
+                serial_progress(int(cur), int(maxv), msg)
+        except Exception:
+            pass  # A progress display failure must never break a clone.
+        if msg and msg != last_msg:
+            last_msg = msg
+            serial_log(msg)
+
+    return _status_to_log
 
 
 def _iter_memory_numbers(radio):
@@ -605,7 +626,7 @@ def _create_radio_for_serial(radio_cls):
     pipe.setDTR(getattr(radio_cls, "WANTS_DTR", True))
     pipe.setRTS(getattr(radio_cls, "WANTS_RTS", True))
     radio = radio_cls(pipe)
-    radio.status_fn = _status_to_log
+    radio.status_fn = _make_status_logger()
     return radio
 
 
@@ -833,7 +854,7 @@ def _upload_selected_radio_sync(module_name: str, class_name: str, rows, setting
             "No cached radio image for this model. Download from radio first, then upload."
         )
     radio = radio_cls(memmap.MemoryMapBytes(base_image))
-    radio.status_fn = _status_to_log
+    radio.status_fn = _make_status_logger()
     pipe = WebSerialPipe(timeout=_serial_pipe_timeout_seconds())
     pipe.baudrate = getattr(radio_cls, "BAUD_RATE", None)
     pipe.setDTR(getattr(radio_cls, "WANTS_DTR", True))
@@ -887,7 +908,7 @@ def upload_image_base64(module_name: str, class_name: str, image_b64: str):
         raise RuntimeUnsupportedError("Invalid image base64 payload") from exc
 
     radio = radio_cls(memmap.MemoryMapBytes(raw_image))
-    radio.status_fn = _status_to_log
+    radio.status_fn = _make_status_logger()
     pipe = WebSerialPipe(timeout=_serial_pipe_timeout_seconds())
     pipe.baudrate = getattr(radio_cls, "BAUD_RATE", None)
     pipe.setDTR(getattr(radio_cls, "WANTS_DTR", True))
@@ -935,6 +956,30 @@ def export_image_base64(module_name: str, class_name: str, rows, settings_groups
         "model": str(getattr(radio_cls, "MODEL", "")),
         "variant": str(getattr(radio_cls, "VARIANT", "")),
         "settings": settings_result["settings"],
+    }
+
+
+def read_image_metadata_base64(image_b64: str):
+    """Parse the CHIRP metadata trailer from a .img payload without importing drivers."""
+    try:
+        raw_image = base64.b64decode(str(image_b64 or ""), validate=True)
+    except Exception as exc:
+        raise RuntimeUnsupportedError("Invalid image base64 payload") from exc
+
+    _, metadata = chirp_common.CloneModeRadio._strip_metadata(raw_image)
+    if not metadata:
+        return {"hasMetadata": False}
+
+    vendor = str(metadata.get("vendor", "") or "")
+    model = str(metadata.get("model", "") or "")
+    vendor, model = directory.MODEL_COMPAT.get((vendor, model), (vendor, model))
+    variant = metadata.get("variant")
+    return {
+        "hasMetadata": True,
+        "rclass": str(metadata.get("rclass", "") or ""),
+        "vendor": vendor,
+        "model": model,
+        "variant": "" if variant is None else str(variant),
     }
 
 
