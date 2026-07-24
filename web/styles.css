@@ -213,9 +213,30 @@ body {
   padding: 0.8rem 1rem;
 }
 
+.toolbar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
 .toolbar h1 {
   margin: 0;
   font-size: 1.1rem;
+}
+
+.version-info {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.version-info a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.version-info a:hover {
+  color: var(--accent);
 }
 
 .toolbar-actions {

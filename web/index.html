@@ -46,7 +46,13 @@
   <body>
     <div class="app-shell">
       <header class="toolbar">
-        <h1>WebCHIRP</h1>
+        <div class="toolbar-title">
+          <h1>WebCHIRP</h1>
+          <p class="version-info" id="version-info" hidden>
+            Updated <span id="version-date"></span> · CHIRP
+            <a id="version-chirp" href="#" target="_blank" rel="noreferrer"></a>
+          </p>
+        </div>
         <div class="toolbar-actions">
           <a
             class="toolbar-link"
@@ -298,6 +304,7 @@
     <input id="csv-file" type="file" accept=".csv,text/csv" hidden />
     <input id="img-file" type="file" accept=".img,application/octet-stream" hidden />
     <script type="module" src="./js/github-button.js"></script>
+    <script type="module" src="./js/version-info.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>
