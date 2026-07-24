@@ -1,20 +1,40 @@
-## 2026-03-14
+# Findings
 
-- `buttons.github.io/buttons.js` is not a viable GitHub star widget under cross-origin isolation. Even if the script is self-hosted, the widget path still depends on cross-origin embed resources, which conflicts with `COEP`/`COOP` on the static `codeplug.org` deployment.
-- The bug-report CTA was previously hidden until debug logs matched `error|traceback|exception`, which made manual reports impossible for usability bugs or flows that fail without those exact markers. The report action should stay visible and prefill a generic issue even with no selected radio or captured runtime error.
-- Some CHIRP drivers do not instantiate cleanly with `None` when enumerating metadata or settings from a non-downloaded state. Generic runtime helpers should fall back to `radio_cls("")` to preserve best-effort schema loading before a live download.
-- Clone-mode settings introspection is not safe to assume on blank/default state. `get_radio_settings()` can fail for drivers like `baofeng_uv17Pro.UV17Pro` unless the runtime has first been seeded with a real cached image or download result.
-- An all-radios initial-load sweep shows the browser prep path is broader than the `UV17Pro` failure: several drivers currently throw during `get_radio_settings()` on blank/default state, including missing parsed memory objects, missing `_` translation bindings, and serialization of `None` setting values.
-- Root cause: browser startup was treating CHIRP radio settings as static metadata. In practice many drivers only materialize settings from loaded backing state: a cached clone image, a parsed file image, or a live serial session. Initial UI load should treat settings as unavailable until that backing state exists, instead of eagerly calling `get_settings()`.
-- Radio-settings validation was replaying every serialized value onto a fresh CHIRP settings tree before upload, including immutable fields that the UI correctly disabled. Drivers can reject those no-op assignments with `This value is not mutable`, so bridge-side apply logic must skip non-mutable CHIRP values entirely.
-- Vendored CHIRP's `RadioSettingValueFloat.get_max()` currently returns `None` because the method body has no `return`. Runtime code that serializes float setting bounds must tolerate that upstream defect and fall back to the instance `_max` field.
-- `webchirp-hw-*` temp directories were created by older real-radio CLI test infrastructure in commit `1f820a5`, but that code was removed in `b456a75`. The remaining `.gitignore` entry was stale residue; current tracked code no longer creates repo-root hardware temp directories.
+Durable, non-obvious facts about CHIRP, the browser runtime, and the project's infrastructure.
+Grouped by topic; each entry starts with a **bold slug** (grep target) and carries its discovery date.
+Narrative/debugging history lives in git log — record only the rule, the mechanism, and the pointer.
+Prune entries when the code or infrastructure they describe changes.
 
-## 2026-03-16
+## CHIRP / Pyodide runtime
 
-- Direct channel-to-codeplug writes in `web/python/runtime_bridge.py` normalized the CSV `Power` cell but still fed the row through `chirp_common.Memory.really_from_csv()`, which ignores the `Power` column entirely. On radios like `uv5r.BaofengUV5R`, that leaves `mem.power` unset and `set_memory()` falls back to index `0`, which is `High`; a live repro on `/dev/cu.usbserial-110` confirmed that changing channel 0 from `High` to `Low` uploaded successfully but read back as `High`.
-- The runtime bridge already exposes enough generic primitives for an agent-facing hardware CLI without adding new Python APIs: `download_selected_radio()` returns rows/settings/CSV, `export_image_base64()` builds CHIRP `.img` payloads, and `load_image_base64()` plus `upload_selected_radio()` cover the corresponding write path.
+- **static-driver-catalog** (2026-06-23): `list_registered_radios()` in Pyodide imports all ~191 CHIRP drivers, each triggering a blocking jsDelivr fetch via `ChirpCdnFinder` — so the catalog is precomputed at build time (`scripts/build-catalog.mjs` → `web/radio-catalog.json`). The runtime accepts it only when its `chirpRevision` exactly matches `DEFAULT_CHIRP_REVISION` (`web/js/python-sources.mjs`), falling back to live enumeration otherwise; `build:catalog` refuses to emit on a drifted submodule. Pyodide boots lazily on first radio selection / CSV / serial action.
+- **rpc-fifo-queue** (2026-06-23): the lazy import hook suspends the interpreter mid-import (JSPI `run_sync`), so two concurrent RPCs importing the same driver re-execute the module body → CHIRP raises `Duplicate radio driver id`; concurrent RPCs also clobber the shared `_sel_*` interpreter globals. All Pyodide-backed RPCs must go through the FIFO call queue (`web/js/call-queue.mjs`); only `getRuntimeInfo` bypasses it. UI-side loads carry monotonic tokens so stale responses never overwrite a newer selection.
+- **settings-need-backing-state** (2026-03-14): many drivers only materialize settings from a cached clone image, parsed file image, or live session — `get_settings()` on blank/default state can throw (missing parsed memory, missing `_` translation bindings, `None` values; e.g. `baofeng_uv17Pro.UV17Pro`). Treat settings as unavailable until backing state exists. When instantiating for metadata enumeration, fall back to `radio_cls("")` if `radio_cls(None)` fails.
+- **skip-immutable-on-apply** (2026-03-14): replaying serialized values onto a fresh settings tree includes immutable fields, which drivers reject with `This value is not mutable`; bridge-side apply logic must skip non-mutable CHIRP values entirely.
+- **upstream-get-max-defect** (2026-03-14, still present 2026-07-23): vendored CHIRP's `RadioSettingValueFloat.get_max()` has no `return` (`chirp/chirp/settings.py:203`), so it returns `None`; serialize float bounds via the `_max` instance field fallback.
 
-## 2026-03-26
+## Channel grid / CSV
 
-- The left sidebar layout relies on flex shrinking. When vertical space gets tight, `.left-panel-main` shrinks before the experimental warning card, which can visually pull the warning upward into the radio selection area instead of letting lower content fall behind the bottom debug output section.
+- **csv-power-column-ignored** (2026-03-16): `chirp_common.Memory.really_from_csv()` ignores the `Power` column entirely, leaving `mem.power` unset so `set_memory()` falls back to index 0 (`High`). Direct channel writes must set power explicitly; confirmed on real UV-5R hardware (Low uploaded, read back High).
+- **paste-readonly-columns** (2026-07-23): `normalizeValue()` returns `previous` for `editable: false` columns, so pasted rows silently kept defaults (e.g. TStep reset to `2.50` on UV-5R where `has_tuning_step=False`; same for `Comment`, ctone/dtcs/offset-gated columns). Programmatic row builders (paste, repeater/GMRS imports) pass `allowReadOnly` (`web/js/ui.js`) so kind/options validation applies but the editable gate doesn't; interactive editors keep the gate.
+- **numeric-enum-matching** (2026-07-23): enum columns with numeric labels (`TStep` "5.00", `rToneFreq` "88.5", `DtcsCode` "023") must fall back to numeric-equality matching, since spreadsheets normalize values to "5", "12.5", "23".
+
+## Radio images (.img) & metadata
+
+- **img-detection-needs-import** (2026-07-23): `directory.get_radio_by_image()` only searches drivers already in `DRV_TO_RADIO`, and the browser imports drivers lazily — so `handleLoadImage` parses the metadata trailer first (`read_image_metadata_base64`, driver-free), resolves the module via the catalog (`findCatalogRadioForImageMetadata`: exact `rclass` class-name match, then vendor/model fallback), imports it, then runs detection.
+- **rclass-may-be-unregistered** (2026-07-23): image metadata `rclass` can name a directory-unregistered class — `export_image_base64` from `uv5r.BaofengUV5R` stamps that name, but the registered entry is `BaofengUV5RGeneric`. Catalog matching must keep the vendor/model fallback, and must apply `directory.MODEL_COMPAT` remaps (e.g. Retevis RT-5R → RT5R) when reading metadata.
+
+## Hosting & deployment
+
+- **pages-cache-window** (2026-07-22): GitHub Pages serves everything with a fixed, non-configurable `Cache-Control: max-age=600` + ETag (Fastly). This creates a ≤10-minute post-deploy window where a stale `index.html` can 404 on old content-hashed asset names. Self-healing and low-impact; if it ever matters, make `build:dist` retain the previous generation of hashed assets rather than fighting headers. Heavy payloads (Pyodide, CHIRP sources) come from jsDelivr with long cache lifetimes, not Pages.
+- **pages-workflow-deploy** (2026-07-22): Pages deploys via `.github/workflows/pages.yml` from `dist/`, HTTPS enforced at `https://webchirp.jasiek.me/` (Web Serial/WebUSB require a secure context; the previous legacy Jekyll build of raw `master` had neither).
+- **no-crossorigin-embeds** (2026-03-14): `buttons.github.io/buttons.js` (and similar embed widgets) cannot work under COEP/COOP cross-origin isolation, even self-hosted — hence the custom `web/js/github-button.js`.
+
+## GitHub PR gotchas
+
+- **pr-refs-go-stale** (2026-07-22/23): GitHub pins a PR's `base.sha` to the merge-base at creation and never advances it (phantom already-merged files stay in the diff — PR #8), and the async PR-sync job can persistently fail to advance `headRefOid` after pushes (PR #7 — recurred on every push). Same workaround for both: retarget the base and back (`gh pr edit N --base <other>` then `--base master`), which re-records both refs. `GET /repos/{owner}/{repo}/compare/master...<head>` always computes a fresh merge-base and is the reliable view of a PR's true diff. Diagnostic order: `git ls-remote` (push landed?) → compare API (GitHub sees commits?) → PR `headRefOid` (PR synced?).
+
+## Process
+
+- **merge-can-drop-tests** (2026-07-23): the `eaeba93` upstream merge took master's `package.json` wholesale, silently dropping two clipboard test scripts from `npm run test:channels`. "Take theirs" resolutions on `package.json` need a check that branch-added test entries survive.
+- **asdf-python-unset** (2026-07-23): `python`/`python3` fail in this repo ("No version is set for command python" — asdf shim, no entry in `.tool-versions`), so the documented `python -m py_compile web/python/runtime_bridge.py` validation step errors out. `/usr/bin/python3 -m py_compile ...` works as a fallback.

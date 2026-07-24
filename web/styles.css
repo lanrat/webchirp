@@ -213,9 +213,30 @@ body {
   padding: 0.8rem 1rem;
 }
 
+.toolbar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
 .toolbar h1 {
   margin: 0;
   font-size: 1.1rem;
+}
+
+.version-info {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.version-info a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.version-info a:hover {
+  color: var(--accent);
 }
 
 .toolbar-actions {
@@ -380,6 +401,7 @@ button:not(:disabled):hover {
   display: none;
 }
 
+#radio-search,
 #radio-make,
 #radio-model {
   width: 100%;
@@ -389,6 +411,58 @@ button:not(:disabled):hover {
   border-radius: 4px;
   background: var(--surface);
   color: var(--text);
+}
+
+.radio-search-wrap {
+  position: relative;
+}
+
+.radio-search-results {
+  position: absolute;
+  top: calc(100% - 0.45rem);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  max-height: 16rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.2rem 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.radio-search-results[hidden] {
+  display: none;
+}
+
+.radio-search-results li {
+  padding: 0.32rem 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.radio-search-results li:hover,
+.radio-search-results li.is-active {
+  background: var(--selected-bg);
+}
+
+.radio-search-results li.radio-search-empty,
+.radio-search-results li.radio-search-more {
+  color: var(--muted);
+  cursor: default;
+  font-style: italic;
+}
+
+.radio-search-results li.radio-search-empty:hover,
+.radio-search-results li.radio-search-more:hover {
+  background: transparent;
 }
 
 .left-panel button:disabled,
@@ -409,6 +483,26 @@ button:not(:disabled):hover {
 
 .serial-actions > :only-child {
   grid-column: 1 / -1;
+}
+
+.clone-progress {
+  margin: 0.1rem 0 0.6rem;
+}
+
+.clone-progress-text {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.clone-progress progress {
+  display: block;
+  width: 100%;
+  height: 0.6rem;
+  accent-color: var(--accent);
 }
 
 .serial-log {
@@ -473,6 +567,23 @@ button:not(:disabled):hover {
   margin-bottom: 0.6rem;
   flex: 0 0 auto;
   position: relative;
+}
+
+/* Uniform height for all toolbar buttons (+, -, up, down, Actions). */
+.channel-toolbar > button,
+#channel-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.3rem;
+  padding: 0.3rem 0.5rem;
+  line-height: 1;
+}
+
+/* The icon buttons are squares matching the toolbar height. */
+.channel-toolbar > button {
+  width: 2.3rem;
+  padding: 0;
 }
 
 .mem-table-scroll {
@@ -682,6 +793,12 @@ button:not(:disabled):hover {
   text-align: left;
 }
 
+.channel-menu-popup .channel-menu-separator {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.25rem 0.2rem;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -710,6 +827,12 @@ button:not(:disabled):hover {
 .modal-card h2 {
   margin: 0 0 0.8rem;
   font-size: 1rem;
+}
+
+.import-choice-message {
+  margin: 0 0 0.9rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .modal-grid {
@@ -822,12 +945,16 @@ button:not(:disabled):hover {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* Let the table take its natural width so all 17 column headers stay
+   readable; it scrolls horizontally inside .mem-table-scroll when the
+   window is narrower (previously table-layout: fixed compressed every
+   column to fit, overlapping the header text). */
 #mem-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   background: var(--surface);
   border: 1px solid var(--border);
-  table-layout: fixed;
 }
 
 #mem-table th,
@@ -835,6 +962,7 @@ button:not(:disabled):hover {
   border: 1px solid var(--border);
   padding: 0.35rem;
   font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 #mem-table th {
@@ -856,6 +984,34 @@ button:not(:disabled):hover {
   background: transparent;
   color: var(--text);
   font-size: 0.85rem;
+}
+
+/* Read-only columns for the selected radio: grey text (cells and header)
+   instead of the browser's default disabled rendering, with a title tooltip
+   set in createCellEditor/renderTable. */
+#mem-table td .readonly-cell,
+#mem-table th.readonly-cell {
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+  opacity: 1;
+}
+
+/* With natural table sizing, editors set the column width floor; keep the
+   auto-indexed Location column compact. */
+#mem-table td input,
+#mem-table td select {
+  min-width: 6rem;
+}
+
+#mem-table td:first-child,
+#mem-table th:first-child {
+  min-width: 2.75rem;
+}
+
+#mem-table td:first-child input,
+#mem-table td:first-child select,
+#mem-table .channel-location-button {
+  min-width: 2.75rem;
 }
 
 #mem-table .channel-location-button {
@@ -972,35 +1128,12 @@ button:not(:disabled):hover {
     content: "\25B8";
   }
 
-  /* Don't compress the 17 columns to fit the screen (which makes them
-     unreadable); let the table take its natural width and scroll horizontally,
-     with readable, tappable cells. */
-  #mem-table {
-    width: max-content;
-    min-width: 100%;
-  }
-
-  #mem-table th,
-  #mem-table td {
-    white-space: nowrap;
-  }
-
+  /* The natural-width, horizontally-scrolling table now applies at all
+     viewports (see the base #mem-table rules); mobile only adds taller,
+     tappable cell editors. */
   #mem-table td input,
   #mem-table td select {
-    min-width: 6rem;
     min-height: 2.25rem;
-  }
-
-  /* Keep the auto-indexed Location column compact. */
-  #mem-table td:first-child,
-  #mem-table th:first-child {
-    min-width: 2.75rem;
-  }
-
-  #mem-table td:first-child input,
-  #mem-table td:first-child select,
-  #mem-table .channel-location-button {
-    min-width: 2.75rem;
   }
 
   /* Comfortable touch targets for primary controls (table cells excluded). */
@@ -1011,10 +1144,16 @@ button:not(:disabled):hover {
   .left-panel select,
   .serial-actions button,
   .channel-toolbar > button,
+  #channel-menu-toggle,
   .channel-menu-popup button,
   .modal-actions button,
   .debug-actions button {
     min-height: 2.75rem;
+  }
+
+  /* Keep the icon buttons square at the larger touch-target height. */
+  .channel-toolbar > button {
+    min-width: 2.75rem;
   }
 
   /* The actions popup is fixed-width on desktop; keep it on-screen on phones. */
@@ -1071,4 +1210,22 @@ button:not(:disabled):hover {
   .toolbar h1 {
     flex: 1 1 100%;
   }
+}
+
+/* Custom tooltip bubble (web/js/tooltip.js): replaces native title tooltips
+   so every tooltip appears after the same 400ms delay. Sits above modals. */
+.app-tooltip {
+  position: fixed;
+  z-index: 100;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  white-space: pre-line;
 }

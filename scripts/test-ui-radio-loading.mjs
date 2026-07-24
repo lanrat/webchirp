@@ -144,9 +144,32 @@ class FakeElement {
 
   focus() {}
 
+  scrollIntoView() {}
+
+  matches(selector) {
+    if (selector === "li[role='option']") {
+      return this.tagName === "LI" && this.getAttribute("role") === "option";
+    }
+    return false;
+  }
+
+  closest(selector) {
+    let node = this;
+    while (node) {
+      if (node.matches?.(selector)) {
+        return node;
+      }
+      node = node.parentNode;
+    }
+    return null;
+  }
+
   querySelectorAll(selector) {
     if (selector === "tr") {
       return this.children.filter((child) => child.tagName === "TR");
+    }
+    if (selector === "li[role='option']") {
+      return this.children.filter((child) => child.matches(selector));
     }
     return [];
   }
@@ -216,6 +239,8 @@ function installFakeDom() {
     ["#report-issue", "button"],
     ["#webserial-support-warning", "p"],
     ["#live-radio-support-warning", "p"],
+    ["#radio-search", "input"],
+    ["#radio-search-results", "ul"],
     ["#radio-make", "select"],
     ["#radio-model", "select"],
     ["#serial-connect-toggle", "button"],
@@ -290,6 +315,8 @@ function installFakeDom() {
 
   return {
     document,
+    radioSearchEl: document.querySelector("#radio-search"),
+    radioSearchResultsEl: document.querySelector("#radio-search-results"),
     radioMakeEl: document.querySelector("#radio-make"),
     radioModelEl: document.querySelector("#radio-model"),
   };
@@ -370,4 +397,228 @@ test("radio dropdowns show Loading... while CHIRP drivers are loading", async ()
   );
   assert.ok(!radioMakeEl.children.some((option) => option.textContent === "Loading..."));
   assert.ok(!radioModelEl.children.some((option) => option.textContent === "Loading..."));
+});
+
+test("search box shows narrowing make+model suggestions without touching dropdowns", async () => {
+  const { radioSearchEl, radioSearchResultsEl, radioMakeEl, radioModelEl } = installFakeDom();
+  const { createUiController } = await import("../web/js/ui.js");
+  const ui = createUiController();
+
+  ui.setRuntimeApi({
+    listRadios: async () => ({
+      radios: [
+        { vendor: "Acme", model: "Alpha", module: "alpha", className: "AlphaRadio", key: "alpha:AlphaRadio", isLiveRadio: false },
+        { vendor: "Acme", model: "Beta", module: "beta", className: "BetaRadio", key: "beta:BetaRadio", isLiveRadio: false },
+        { vendor: "Baofeng", model: "UV-5R", module: "uv5r", className: "BaofengUV5R", key: "uv5r:BaofengUV5R", isLiveRadio: false },
+      ],
+    }),
+    getRuntimeInfo: async () => ({ chirpRevision: "test-revision" }),
+    getRadioMetadata: async () => ({ headers: ["Location", "Name"], columns: {} }),
+    getRadioSettings: async () => ({ supported: false, available: false, requiresImage: false, message: "", groups: [] }),
+    parseCsv: async () => ({ headers: ["Location", "Name"], rows: [], errors: [] }),
+  });
+
+  await ui.init(true);
+
+  // A vendor query lists all of that vendor's models as "<Make> <Model>".
+  radioSearchEl.value = "acme";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.equal(radioSearchResultsEl.hidden, false);
+  assert.deepEqual(
+    radioSearchResultsEl.children.map((li) => li.textContent),
+    ["Acme Alpha", "Acme Beta"],
+  );
+
+  // A model query narrows the list to the matching radio.
+  radioSearchEl.value = "uv-5r";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.deepEqual(
+    radioSearchResultsEl.children.map((li) => li.textContent),
+    ["Baofeng UV-5R"],
+  );
+
+  // Typing never narrows the make/model dropdowns themselves.
+  assert.deepEqual(radioMakeEl.children.map((o) => o.textContent), ["Acme", "Baofeng"]);
+  assert.deepEqual(radioModelEl.children.map((o) => o.textContent), ["Alpha", "Beta"]);
+
+  // No matches shows an inert placeholder row.
+  radioSearchEl.value = "nonesuch";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.deepEqual(radioSearchResultsEl.children.map((li) => li.textContent), ["No matching radios"]);
+  assert.ok(radioSearchResultsEl.children[0].classList.contains("radio-search-empty"));
+
+  // Clearing the box closes the suggestion list.
+  radioSearchEl.value = "";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.equal(radioSearchResultsEl.hidden, true);
+  assert.equal(radioSearchResultsEl.children.length, 0);
+});
+
+test("search suggestions disambiguate duplicates, cap results, and close on Escape", async () => {
+  const { radioSearchEl, radioSearchResultsEl } = installFakeDom();
+  const { createUiController } = await import("../web/js/ui.js");
+  const ui = createUiController();
+
+  // Two drivers sharing "Acme Twin" plus enough filler to exceed the 50-result cap.
+  const radios = [
+    { vendor: "Acme", model: "Twin", module: "twin_a", className: "TwinA", key: "twin_a:TwinA", isLiveRadio: false },
+    { vendor: "Acme", model: "Twin", module: "twin_b", className: "TwinB", key: "twin_b:TwinB", isLiveRadio: false },
+  ];
+  for (let i = 0; i < 60; i += 1) {
+    radios.push({
+      vendor: "Bulk",
+      model: `Filler${i}`,
+      module: `filler${i}`,
+      className: `Filler${i}Radio`,
+      key: `filler${i}:Filler${i}Radio`,
+      isLiveRadio: false,
+    });
+  }
+
+  ui.setRuntimeApi({
+    listRadios: async () => ({ radios }),
+    getRuntimeInfo: async () => ({ chirpRevision: "test-revision" }),
+    getRadioMetadata: async () => ({ headers: ["Location", "Name"], columns: {} }),
+    getRadioSettings: async () => EMPTY_SETTINGS,
+    parseCsv: async () => ({ headers: ["Location", "Name"], rows: [], errors: [] }),
+  });
+
+  await ui.init(true);
+
+  // Duplicate "<Make> <Model>" labels are disambiguated by driver class.
+  radioSearchEl.value = "twin";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.deepEqual(
+    radioSearchResultsEl.children.map((li) => li.textContent),
+    ["Acme Twin (TwinA)", "Acme Twin (TwinB)"],
+  );
+
+  // More than 50 matches: list is capped and a footer reports the overflow.
+  radioSearchEl.value = "filler";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  const optionItems = radioSearchResultsEl.querySelectorAll("li[role='option']");
+  assert.equal(optionItems.length, 50);
+  const footer = radioSearchResultsEl.children.at(-1);
+  assert.ok(footer.classList.contains("radio-search-more"));
+  assert.equal(footer.textContent, "10 more — keep typing to narrow down");
+
+  // Escape closes the list without changing the input text.
+  radioSearchEl.dispatchEvent({ type: "keydown", key: "Escape", preventDefault() {}, stopPropagation() {} });
+  assert.equal(radioSearchResultsEl.hidden, true);
+  assert.equal(radioSearchEl.value, "filler");
+});
+
+function tableHeaderTexts(document) {
+  const headerRow = document.querySelector("#mem-table thead").children[0];
+  return (headerRow?.children || []).map((th) => th.textContent);
+}
+
+function flushMicrotasks() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+const STALE_TEST_CATALOG = [
+  { vendor: "Acme", model: "Alpha", module: "alpha", className: "AlphaRadio", key: "alpha:AlphaRadio", isLiveRadio: false },
+  { vendor: "SlowCo", model: "Slow", module: "slow", className: "SlowRadio", key: "slow:SlowRadio", isLiveRadio: false },
+  { vendor: "FastCo", model: "Fast", module: "fast", className: "FastRadio", key: "fast:FastRadio", isLiveRadio: false },
+];
+
+const EMPTY_SETTINGS = { supported: false, available: false, requiresImage: false, message: "", groups: [] };
+
+test("stale metadata response does not overwrite a newer radio selection", async () => {
+  const { radioMakeEl } = installFakeDom();
+  const { createUiController } = await import("../web/js/ui.js");
+  const ui = createUiController();
+  const slowMetadata = createDeferred();
+
+  ui.setRuntimeApi({
+    listRadios: async () => ({ radios: STALE_TEST_CATALOG }),
+    getRuntimeInfo: async () => ({ chirpRevision: "test-revision" }),
+    getRadioMetadata: async ({ module }) => {
+      if (module === "slow") {
+        return slowMetadata.promise;
+      }
+      const header = module === "fast" ? "FastHeader" : "AlphaHeader";
+      return { headers: ["Location", header], columns: {} };
+    },
+    getRadioSettings: async () => EMPTY_SETTINGS,
+    parseCsv: async () => ({ headers: ["Location", "Name"], rows: [], errors: [] }),
+  });
+
+  await ui.init(true);
+
+  // Select the slow radio; its metadata response stays in flight.
+  radioMakeEl.value = "SlowCo";
+  radioMakeEl.dispatchEvent({ type: "change" });
+
+  // Move on to the fast radio, whose metadata resolves immediately.
+  radioMakeEl.value = "FastCo";
+  radioMakeEl.dispatchEvent({ type: "change" });
+  await flushMicrotasks();
+  assert.ok(tableHeaderTexts(globalThis.document).includes("FastHeader"));
+
+  // The slow radio's response arrives last; it must be discarded.
+  slowMetadata.resolve({ headers: ["Location", "SlowHeader"], columns: {} });
+  await flushMicrotasks();
+
+  const headers = tableHeaderTexts(globalThis.document);
+  assert.ok(headers.includes("FastHeader"));
+  assert.ok(!headers.includes("SlowHeader"));
+});
+
+test("picking a search suggestion sets make/model and loads the radio once", async () => {
+  const { radioSearchEl, radioSearchResultsEl, radioMakeEl, radioModelEl } = installFakeDom();
+  const { createUiController } = await import("../web/js/ui.js");
+  const ui = createUiController();
+  const metadataCalls = [];
+
+  ui.setRuntimeApi({
+    listRadios: async () => ({ radios: STALE_TEST_CATALOG }),
+    getRuntimeInfo: async () => ({ chirpRevision: "test-revision" }),
+    getRadioMetadata: async ({ module }) => {
+      metadataCalls.push(module);
+      return { headers: ["Location", "Name"], columns: {} };
+    },
+    getRadioSettings: async () => EMPTY_SETTINGS,
+    parseCsv: async () => ({ headers: ["Location", "Name"], rows: [], errors: [] }),
+  });
+
+  await ui.init(true);
+  const callsAfterInit = metadataCalls.length;
+  const noopKeyEvent = (key) => ({ type: "keydown", key, preventDefault() {}, stopPropagation() {} });
+
+  // Typing only opens suggestions; no radio load happens yet.
+  radioSearchEl.value = "slow";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  radioSearchEl.value = "co";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  assert.equal(metadataCalls.length, callsAfterInit);
+  assert.deepEqual(
+    radioSearchResultsEl.children.map((li) => li.textContent),
+    ["SlowCo Slow", "FastCo Fast"],
+  );
+
+  // Arrow down highlights the second suggestion; Enter selects it.
+  radioSearchEl.dispatchEvent(noopKeyEvent("ArrowDown"));
+  radioSearchEl.dispatchEvent(noopKeyEvent("Enter"));
+  await flushMicrotasks();
+
+  assert.equal(radioMakeEl.value, "FastCo");
+  assert.equal(radioModelEl.value, "fast:FastRadio");
+  assert.equal(radioSearchEl.value, "FastCo Fast");
+  assert.equal(radioSearchResultsEl.hidden, true);
+  assert.equal(metadataCalls.length, callsAfterInit + 1);
+  assert.equal(metadataCalls.at(-1), "fast");
+
+  // Clicking a suggestion with the mouse selects it as well.
+  radioSearchEl.value = "slow";
+  radioSearchEl.dispatchEvent({ type: "input" });
+  const slowItem = radioSearchResultsEl.children[0];
+  radioSearchResultsEl.dispatchEvent({ type: "mousedown", target: slowItem, preventDefault() {} });
+  await flushMicrotasks();
+
+  assert.equal(radioMakeEl.value, "SlowCo");
+  assert.equal(radioModelEl.value, "slow:SlowRadio");
+  assert.equal(radioSearchEl.value, "SlowCo Slow");
+  assert.equal(metadataCalls.at(-1), "slow");
 });
