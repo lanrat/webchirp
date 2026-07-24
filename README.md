@@ -8,19 +8,30 @@ Prototype for running parts of [CHIRP](https://github.com/kk7ds/chirp) in the br
 
 ## What is implemented
 
-- `chirp` is included as a git submodule at `/Users/jps/github/webchirp/chirp`
-- Browser UI with a channel-memory table inspired by CHIRP
-- Python runtime in-browser (Pyodide) running CHIRP code (`generic_csv` driver)
-- CSV import/parse via CHIRP Python code
-- CSV export/normalization via CHIRP Python code
-- Web Serial bridge (browser serial in JS, called from Python in Pyodide)
-- Python-driven TX/RX serial transaction path (`serialConnect`, `serialTxRx`)
-- Radio make/model dropdowns populated from CHIRP driver source files
-- Selection-aware download/upload actions using selected CHIRP clone-mode driver
+- `chirp` is included as a git submodule at `chirp/`
+- Browser UI with a CHIRP-inspired **Channels** table and a **Settings** editor,
+  switchable with tabs.
+- Python runtime in-browser (Pyodide) running unmodified CHIRP driver code.
+- Radio make/model dropdowns populated from CHIRP driver sources, served from a
+  prebuilt static catalog (`web/radio-catalog.json`) with live enumeration as a
+  fallback.
+- Selection-aware **Download Radio** / **Upload Radio** using the selected CHIRP
+  clone-mode driver (`sync_in`/`sync_out`), with the clone image cached per driver.
+- Radio settings read and validated through the selected driver
+  (`get_radio_settings` / `validate_radio_settings`).
+- Channel editing: insert / remove / move, copy / cut / paste, plus GMRS, FRS,
+  and PMR446 band-preset generators.
+- Repeater imports from external data sources (RepeaterBook, Przemienniki).
+- CSV import/export and CHIRP `.img` clone-file import/export, all round-tripped
+  through CHIRP Python code.
+- Web Serial bridge (browser serial in JS, called from Python in Pyodide) with a
+  WebUSB fallback path (FTDI / PL2303 chip drivers) for browsers without native
+  Web Serial.
+- Upload preflight that validates edited rows before any bytes are written.
 
 ## Run the prototype
 
-From `/Users/jps/github/webchirp`:
+From the repository root:
 
 ```bash
 npm run dev
@@ -75,7 +86,7 @@ runtime bridge (`web/python/runtime_bridge.py`) and local CHIRP source loading
 path used by the Node tests. This is the intended agent-facing CLI for scripted
 radio access.
 
-From `/Users/jps/github/webchirp`:
+From the repository root:
 
 ```bash
 npm run radio:read -- --port /dev/ttyUSB0 --module uv5r --class BaofengUV5R --format json --output /tmp/uv5r.json
@@ -113,27 +124,37 @@ format-specific codeplug files.
 
 ## Architecture
 
-- Frontend: `/Users/jps/github/webchirp/web/index.html` + `/Users/jps/github/webchirp/web/app.js`
-- Main-thread runtime bridge: `/Users/jps/github/webchirp/web/js/runtime-rpc.js`
-- Python source providers: `/Users/jps/github/webchirp/web/js/python-sources.mjs`
-- Versioned Python runtime code: `/Users/jps/github/webchirp/web/python/runtime_bridge.py`
+- Entry point / wiring: `web/app.js` connects the UI controller, runtime RPC
+  client, and serial bridge.
+- UI controller: `web/js/ui.js` (channel table, settings editor, clipboard,
+  status/debug panels).
+- Serial bridge: `web/js/serial.js` (native Web Serial) with WebUSB chip drivers
+  in `web/js/ftdi-webusb.js` and `web/js/pl2303-webusb.js`.
+- Main-thread runtime RPC client + Pyodide bootstrap: `web/js/runtime-rpc.js`
+  (runs on the main thread — there is no Web Worker).
+- Python source providers: `web/js/python-sources.mjs`.
+- Versioned Python runtime code: `web/python/runtime_bridge.py`.
 - Browser runtime loads CHIRP source files into Pyodide from jsDelivr (revision-pinned).
 - Command-line runtime can load CHIRP source files from a local directory:
   - `WEBCHIRP_CHIRP_DIR=/path/to/chirp npm run test:channels`
-- Core CHIRP files preloaded into Pyodide include:
-  - `/chirp/chirp/__init__.py`
-  - `/chirp/chirp/chirp_common.py`
-  - `/chirp/chirp/directory.py`
-  - `/chirp/chirp/drivers/generic_csv.py`
-  - and required dependencies (`errors.py`, `util.py`, `memmap.py`)
+- Core CHIRP files preloaded into Pyodide (see `CORE_CHIRP_RELATIVE_FILES` in
+  `web/js/python-sources.mjs`):
+  - `chirp/__init__.py`, `chirp/errors.py`, `chirp/util.py`, `chirp/memmap.py`
+  - `chirp/chirp_common.py`, `chirp/directory.py`, `chirp/settings.py`
+  - `chirp/pyPEG.py`, `chirp/bitwise_grammar.py`, `chirp/bitwise.py`
+  - `chirp/drivers/generic_csv.py`, `chirp/drivers/h777.py`
+  - Any other driver module is fetched on demand when its radio is selected.
 
 ## Important scope note
 
-This MVP proves in-browser execution of CHIRP Python logic for file-backed workflows.
+The file-backed workflows (CSV, `.img`, settings) run unmodified CHIRP Python
+logic in the browser and are the most exercised paths.
 
-Live browser serial now attempts to execute the selected CHIRP clone-mode
-driver (`sync_in`/`sync_out`) through a generalized pyserial-like bridge.
-Compatibility still depends on driver expectations and browser transport limits.
+Live browser serial executes the selected CHIRP clone-mode driver
+(`sync_in`/`sync_out`) through a generalized pyserial-like bridge, and has been
+verified end-to-end (e.g. Baofeng UV-5R). Compatibility with any given radio
+still depends on that driver's expectations and on browser transport limits, so
+treat an untested make/model as unverified.
 
 ## Sequence diagram (sketch) of how it all works
 
@@ -142,36 +163,39 @@ sequenceDiagram
   autonumber
   participant U as User
   participant UI as ui.js
-  participant APP as app.js
   participant RPC as runtime-rpc.js
   participant SRC as python-sources.mjs
-  participant PY as runtime_bridge.py
-  participant S as serial.js
+  participant PY as runtime_bridge.py<br/>(Pyodide)
+  participant S as serial.js<br/>(Web Serial / WebUSB)
   participant R as Radio
 
-  Note over APP,UI: app.js wires UI controller + runtime RPC client + serial bridge
+  Note over UI,S: app.js wires the UI controller, main-thread RPC client, and serial bridge
 
   U->>UI: Open page
-  UI->>RPC: callWorker("listRadios")
-  RPC->>SRC: listDriverModules() + seedPyodideRuntime()
-  SRC-->>RPC: Driver module list + runtime bridge source
-  RPC->>PY: list_registered_radios(...)
-  PY-->>RPC: radios[]
+  UI->>RPC: listRadios()
+  alt Static catalog matches pinned CHIRP revision
+    RPC->>RPC: Load web/radio-catalog.json
+  else Missing / stale
+    RPC->>SRC: listDriverModules() + seedPyodideRuntime()
+    SRC-->>RPC: Driver module list + runtime bridge source
+    RPC->>PY: list_registered_radios(...)
+    PY-->>RPC: radios[]
+  end
   RPC-->>UI: Populate make/model dropdowns
 
   U->>UI: Select make/model, click Connect
-  UI->>RPC: callWorker("serialConnect", baudRate)
+  UI->>RPC: serialConnect(baudRate)
   RPC->>PY: webserial_connect(baud)
   PY->>RPC: serial_open(...)
   RPC->>S: handleSerialRpc("open")
-  S-->>R: Open Web Serial port
+  S-->>R: Open serial port (Web Serial or WebUSB)
   S-->>RPC: connected
   RPC-->>UI: connected/status
 
   U->>UI: Click Download Radio
-  UI->>RPC: callWorker("downloadSelectedRadio", {module,className})
+  UI->>RPC: downloadSelectedRadio({module, className})
   RPC->>PY: ensure_radio_module(module)
-  RPC->>PY: download_selected_radio(module,className)
+  RPC->>PY: download_selected_radio(module, className)
   PY->>RPC: serial_prepare_clone(...)
   RPC->>S: prepareClone(DTR/RTS, settle)
   S-->>R: Set control lines + settle
@@ -185,23 +209,23 @@ sequenceDiagram
     RPC-->>PY: bytes
   end
   PY->>PY: Cache image in LAST_IMAGE_BY_DRIVER
-  PY-->>RPC: rows + headers
-  RPC-->>UI: Populate editable memory table
+  PY-->>RPC: rows + headers + settings
+  RPC-->>UI: Populate editable Channels table + Settings editor
 
-  U->>UI: Edit channels, click Upload Radio
-  UI->>RPC: callWorker("validateRowsForUpload", {rows,module,className})
+  U->>UI: Edit channels/settings, click Upload Radio
+  UI->>RPC: validateRowsForUpload({rows, module, className})
   RPC->>PY: validate_rows_for_upload(...)
   PY-->>RPC: valid + issues
 
   alt Preflight invalid
     RPC-->>UI: Block upload + highlight invalid cells
   else Preflight valid
-    UI->>RPC: callWorker("uploadSelectedRadio", {module,className,rows})
+    UI->>RPC: uploadSelectedRadio({module, className, rows, settings})
     RPC->>PY: ensure_radio_module(module)
-    RPC->>PY: upload_selected_radio(module,className,rows)
+    RPC->>PY: upload_selected_radio(module, className, rows, settings)
 
     alt Cached image exists
-      PY->>PY: Apply edited rows to cached image
+      PY->>PY: Apply edited rows + settings to cached image
       PY->>RPC: serial_prepare_clone(...)
       RPC->>S: prepareClone(...)
       loop sync_out() serial exchange
@@ -221,6 +245,6 @@ sequenceDiagram
     end
   end
 
-  Note over UI,PY: callWorker() logs full stack traces to Debug Output on runtime errors
+  Note over UI,PY: The RPC client logs full stack traces to Debug Output on runtime errors
 
 ```
