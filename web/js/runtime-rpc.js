@@ -1,13 +1,16 @@
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.mjs";
+import { createCallQueue } from "./call-queue.mjs";
+import { findCatalogRadioForImageMetadata } from "./image-metadata.mjs";
 import {
   createBrowserCdnPythonSource,
+  DEFAULT_CHIRP_REVISION,
   installFetchChirpSourceGlobal,
   listDriverModules,
   seedPyodideRuntime,
 } from "./python-sources.mjs";
 
 const PYODIDE_INDEX_URL = "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/";
-const CHIRP_REVISION = "1467519e792e8ebcc9a33dc40df0b2e273ce9a53";
+const CHIRP_REVISION = DEFAULT_CHIRP_REVISION;
 
 const pythonSource = createBrowserCdnPythonSource({
   chirpRevision: CHIRP_REVISION,
@@ -19,6 +22,10 @@ let bootstrapPromise;
 let radioCatalogCache = null;
 let handleSerialRpc = null;
 let bootstrapFailed = false;
+let debugLog = null;
+
+// All Pyodide-backed methods must run one at a time; see call-queue.mjs.
+const enqueueRuntimeCall = createCallQueue();
 
 // Dispatch serial operations to the app's browser-serial bridge handler.
 async function serialRpc(op, payload = {}) {
@@ -50,6 +57,12 @@ function installSerialBridgeGlobals() {
     serialRpc("log", {
       message: String(message || ""),
     });
+  globalThis.serial_progress = (cur, max, msg) =>
+    serialRpc("progress", {
+      cur: Number(cur),
+      max: Number(max),
+      msg: String(msg || ""),
+    });
   globalThis.serial_prepare_clone = (wantsDtr, wantsRts, settleMs) =>
     serialRpc("prepareClone", {
       wantsDtr: Boolean(wantsDtr),
@@ -67,11 +80,47 @@ async function ensureSelectedRadioModules(moduleShortName) {
   await pyodide.runPythonAsync("ensure_radio_module(_sel_module_short)");
 }
 
-// Build and cache the radio catalog from CHIRP's runtime registration directory.
-async function loadRadioCatalogFromSources() {
-  if (radioCatalogCache) {
-    return radioCatalogCache;
+function sortRadioCatalog(radios) {
+  return radios.slice().sort((a, b) => {
+    const av = `${a.vendor} ${a.model}`;
+    const bv = `${b.vendor} ${b.model}`;
+    return av.localeCompare(bv);
+  });
+}
+
+// Prefer a prebuilt static catalog so dropdowns can populate without booting
+// Pyodide or importing every driver. Returns null if it is missing/unusable
+// or was generated from a different CHIRP revision than this runtime, so
+// callers fall back to live enumeration.
+async function loadRadioCatalogFromStatic() {
+  try {
+    const url = new URL("../radio-catalog.json", import.meta.url);
+    const res = await fetch(url);
+    if (!res.ok) {
+      return null;
+    }
+    const data = await res.json();
+    if (data?.chirpRevision !== CHIRP_REVISION) {
+      if (debugLog) {
+        debugLog(
+          `CATALOG SKIP static catalog is for chirp ${data?.chirpRevision || "unknown"}, `
+          + `runtime is pinned to ${CHIRP_REVISION}; falling back to live enumeration`,
+        );
+      }
+      return null;
+    }
+    const radios = data?.radios;
+    if (!Array.isArray(radios) || radios.length === 0) {
+      return null;
+    }
+    return radios;
+  } catch {
+    return null;
   }
+}
+
+// Build the radio catalog by importing every driver in Pyodide (slow first run).
+async function loadRadioCatalogFromSources() {
   const modules = await listDriverModules(pythonSource);
 
   await ensurePyodide();
@@ -89,6 +138,20 @@ async function loadRadioCatalogFromSources() {
 
   radioCatalogCache = allRadios;
   return radioCatalogCache;
+}
+
+// Resolve the radio catalog, preferring the prebuilt static file so the
+// dropdowns appear without waiting on Pyodide + per-driver imports.
+async function loadRadioCatalog() {
+  if (radioCatalogCache) {
+    return radioCatalogCache;
+  }
+  const fromStatic = await loadRadioCatalogFromStatic();
+  if (fromStatic) {
+    radioCatalogCache = sortRadioCatalog(fromStatic);
+    return radioCatalogCache;
+  }
+  return loadRadioCatalogFromSources();
 }
 
 // Lazily initialize Pyodide, preload core CHIRP files, and load runtime bridge.
@@ -131,7 +194,7 @@ async function handleGetRuntimeInfo() {
 }
 
 async function handleListRadios() {
-  const radios = await loadRadioCatalogFromSources();
+  const radios = await loadRadioCatalog();
   return { radios };
 }
 
@@ -173,6 +236,23 @@ async function handleExportImage(payload = {}) {
 async function handleLoadImage(payload = {}) {
   await requirePyodide();
   pyodide.globals.set("_image_b64", payload.imageBase64 || "");
+  // CHIRP image detection only searches drivers that are already imported, so
+  // read the metadata trailer first and import the matching driver module.
+  const metadata = await runPythonJson(
+    "json.dumps(read_image_metadata_base64(_image_b64))",
+  );
+  if (metadata?.hasMetadata) {
+    const radios = await loadRadioCatalog();
+    const match = findCatalogRadioForImageMetadata(radios, metadata);
+    if (match) {
+      await ensureSelectedRadioModules(match.module);
+    } else if (debugLog) {
+      debugLog(
+        `IMAGE METADATA no catalog match for ${metadata.vendor} ${metadata.model} `
+        + `(class ${metadata.rclass || "unknown"})`,
+      );
+    }
+  }
   return runPythonJson("json.dumps(load_image_base64(_image_b64))");
 }
 
@@ -263,17 +343,25 @@ const RUNTIME_METHODS = Object.freeze({
   validateRadioSettings: handleValidateRadioSettings,
 });
 
+// getRuntimeInfo never enters Pyodide, and error reporting relies on it even
+// while a queued call is stuck; every other method must wait its turn.
+const UNQUEUED_METHODS = new Set(["getRuntimeInfo"]);
+
 export function createRuntimeRpcClient({
   handleSerialRpc: nextHandleSerialRpc,
   logDebug,
   onRuntimeCrash,
 }) {
   handleSerialRpc = nextHandleSerialRpc;
+  debugLog = logDebug || null;
 
-  function wrapRuntimeMethod(handler) {
+  function wrapRuntimeMethod(name, handler) {
     return async function invokeRuntimeMethod(payload = {}) {
       try {
-        return await handler(payload);
+        if (UNQUEUED_METHODS.has(name)) {
+          return await handler(payload);
+        }
+        return await enqueueRuntimeCall(() => handler(payload));
       } catch (error) {
         const detailedError =
           (typeof error?.stack === "string" && error.stack) ||
@@ -294,7 +382,7 @@ export function createRuntimeRpcClient({
 
   const runtimeApi = {};
   for (const [name, handler] of Object.entries(RUNTIME_METHODS)) {
-    runtimeApi[name] = wrapRuntimeMethod(handler);
+    runtimeApi[name] = wrapRuntimeMethod(name, handler);
   }
 
   return Object.freeze(runtimeApi);

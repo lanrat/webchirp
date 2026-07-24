@@ -290,6 +290,7 @@ function installSerialGlobals(serialBridge, target = globalThis) {
     console.log(`[SERIAL] ${String(message || "")}`);
     return { logged: true };
   };
+  target.serial_progress = () => ({ reported: true });
   target.serial_prepare_clone = (wantsDtr, wantsRts, settleMs) =>
     serialBridge.prepareClone(wantsDtr, wantsRts, settleMs);
   target.serial_reset_buffers = () => serialBridge.resetBuffers();
