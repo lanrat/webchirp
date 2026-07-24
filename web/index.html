@@ -301,6 +301,24 @@
       </form>
     </div>
 
+    <div
+      id="import-choice-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-choice-title"
+    >
+      <div class="modal-card">
+        <h2 id="import-choice-title">Import CSV</h2>
+        <p id="import-choice-message" class="import-choice-message"></p>
+        <div class="modal-actions">
+          <button id="import-choice-cancel" type="button">Cancel</button>
+          <button id="import-choice-merge" type="button">Merge (append)</button>
+          <button id="import-choice-replace" type="button">Replace</button>
+        </div>
+      </div>
+    </div>
+
     <input id="csv-file" type="file" accept=".csv,text/csv" hidden />
     <input id="img-file" type="file" accept=".img,application/octet-stream" hidden />
     <script type="module" src="./js/github-button.js"></script>
